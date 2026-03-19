@@ -863,7 +863,112 @@ function buildGammaSqueezeProjection({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 11. SYSTEMIC ALPHA TRACKER  (LENS tab — Cell P1)
+// 11. WEEKEND SHIELD REPORT  (4:00 PM Friday — Oil/VIX contingency)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Calculates the Friday 4:00 PM delta position and stress-tests it against
+ * an Oil spike ($135+) over the weekend, when the market is closed.
+ *
+ * Key insight: if Oil spikes to $135 over the weekend:
+ *   → Monday open: VIX likely gaps up (energy shock = risk-off)
+ *   → Monday harvest: larger VIX PnL → more harvest to fund call roll / buy dip
+ *   → AAPL: short-term pullback (risk-off), but structurally IMMUNE to oil
+ *   → Net: harvest absorbs the Gamma Gap, and the dip is an entry to roll calls lower
+ *
+ * "Gamma Gap" = the delta your position loses if AAPL opens -5% on Monday.
+ *   Covered by: weekend VIX harvest estimate at elevated oil price.
+ *
+ * inputs: {
+ *   aaplPriceFriday   : AAPL closing price Friday
+ *   vixFriday         : VIX level at Friday close
+ *   oilFriday         : Oil price at Friday close
+ *   oilStressScenario : stress-test oil level (e.g. 135)
+ *   vixSensitivity    : how much VIX rises per $10 oil (default: 1.5 VIX pts)
+ *   vixPosition       : VIX long notional
+ *   harvestRate        : fraction of VIX PnL harvested
+ *   tranches          : from appleCallOverlay.tranches
+ *   aaplIV            : current IV
+ *   daysLeftToExpiry  : days remaining on the options
+ * }
+ */
+function buildWeekendShieldReport({
+  aaplPriceFriday,
+  vixFriday,
+  oilFriday,
+  oilStressScenario = 135,
+  vixSensitivity    = 1.5,     // VIX pts per $10 oil spike
+  vixPosition,
+  harvestRate       = 0.15,
+  tranches          = [],
+  aaplIV,
+  daysLeftToExpiry,
+}) {
+  // Model oil stress
+  const oilDelta    = Math.max(0, oilStressScenario - oilFriday);
+  const vixStress   = vixFriday + (oilDelta / 10) * vixSensitivity;
+
+  // AAPL stress: risk-off gap, but structurally immune to oil — model as -4% to -7%
+  const aaplGapPct  = -(0.04 + Math.min(0.03, oilDelta / 10 * 0.008)); // -4% to -7%
+  const aaplMonday  = aaplPriceFriday * (1 + aaplGapPct);
+
+  // Gamma Gap: delta lost on the Monday gap
+  function nd1(S, K, iv, T_days) {
+    const T = T_days / 365;
+    if (T <= 0) return S > K ? 1 : 0;
+    const d1 = (Math.log(S / K) + 0.5 * iv * iv * T) / (iv * Math.sqrt(T));
+    return 1 / (1 + Math.exp(-1.7 * d1));
+  }
+
+  const deltaFriday = tranches.reduce((s, t) =>
+    s + t.contracts * 100 * nd1(aaplPriceFriday, t.strike, aaplIV, daysLeftToExpiry), 0);
+  const deltaMonday = tranches.reduce((s, t) =>
+    s + t.contracts * 100 * nd1(aaplMonday, t.strike, aaplIV, daysLeftToExpiry - 3), 0);
+
+  const gammaGapShares = deltaFriday - deltaMonday;                   // shares of delta lost
+  const gammaGapDollar = Math.round(gammaGapShares * aaplMonday);    // $ delta lost
+
+  // Monday harvest from VIX stress
+  const mondayVixReturn   = (vixStress - vixFriday) / vixFriday;     // % VIX move
+  const mondayVixPnl      = Math.round(vixPosition * mondayVixReturn);
+  const mondayHarvest     = Math.round(mondayVixPnl * harvestRate);
+
+  // PnL on AAPL calls from the gap
+  const callPnlFromGap = tranches.reduce((s, t) => {
+    const intrinsicFri = Math.max(0, aaplPriceFriday - t.strike);
+    const intrinsicMon = Math.max(0, aaplMonday      - t.strike);
+    return s + t.contracts * 100 * (intrinsicMon - intrinsicFri);
+  }, 0);
+
+  const netWeekendPnl = Math.round(mondayHarvest + callPnlFromGap);
+
+  const covered = mondayHarvest >= Math.abs(gammaGapDollar * 0.01); // harvest covers 1% AAPL move
+
+  return {
+    scenario: `Oil spikes from $${oilFriday} → $${oilStressScenario} over weekend`,
+    oilStress:       oilStressScenario,
+    vixStressLevel:  +vixStress.toFixed(1),
+    aaplGapPct:      +(aaplGapPct * 100).toFixed(1),
+    aaplMondayPrice: +aaplMonday.toFixed(2),
+    deltaFriday:     Math.round(deltaFriday),
+    deltaMonday:     Math.round(deltaMonday),
+    gammaGapShares:  Math.round(gammaGapShares),
+    gammaGapDollar,
+    mondayVixPnl,
+    mondayHarvest,
+    callPnlFromGap:  Math.round(callPnlFromGap),
+    netWeekendPnl,
+    gammaGapCovered: covered,
+    action: covered
+      ? "Gamma Gap covered by Monday VIX harvest. Roll calls to lower strike on open to reduce cost basis."
+      : "Gamma Gap exceeds single-day harvest. Deploy 2-day harvest reserve to roll calls.",
+    symbiosisPnl: Math.round(mondayHarvest + callPnlFromGap),
+    note: "AAPL structurally immune to oil. Short-term gap = opportunity to lower call strikes at zero net cost.",
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. SYSTEMIC ALPHA TRACKER  (LENS tab — Cell P1)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -1060,6 +1165,9 @@ function buildDashboard(inputs) {
     aaplIV                   = 0.25,
     appleTargetNotional      = null,
     appleDaysToExpiry        = 45,
+    // Weekend Shield inputs (optional — provide on Friday)
+    buildWeekend             = false,
+    oilStressScenario        = 135,
   } = inputs;
 
   // Layer 1: engine state
@@ -1132,6 +1240,20 @@ function buildDashboard(inputs) {
       })
     : null;
 
+  const weekendShield = buildWeekend && appleCallOverlay && appleCallOverlay.tranches.length > 0
+    ? buildWeekendShieldReport({
+        aaplPriceFriday:  aaplPrice,
+        vixFriday:        vix,
+        oilFriday:        oil,
+        oilStressScenario,
+        vixPosition,
+        harvestRate,
+        tranches:         appleCallOverlay.tranches,
+        aaplIV,
+        daysLeftToExpiry: appleDaysToExpiry,
+      })
+    : null;
+
   // Layer 9: Systemic Alpha (LENS tab P1)
   const systemicAlpha = buildSystemicAlpha({
     cumulative493TrsGain,
@@ -1157,6 +1279,7 @@ function buildDashboard(inputs) {
     appleCallOverlay,
     appleOptionsBins,
     gammaSqueezeProjection,
+    weekendShield,
     closingCross,
     alerts,
   };

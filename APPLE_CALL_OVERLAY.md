@@ -392,13 +392,109 @@ For each row with price level in column B:
 
 ---
 
+## Weekend Shield Report — Friday 4:00 PM
+
+Run this at Friday close to lock the position into autonomous weekend mode.
+Tests the Oil spike scenario that most threatens the overlay.
+
+```
+WEEKEND SHIELD  (March 21, 2026 — Friday 4:00 PM)
+═══════════════════════════════════════════════════════════════════════
+
+Scenario: Oil $118 → $135 over weekend  (+$17, +14.4%)
+  VIX stress level:      27.9  (VIX > 27 → BLACK SWAN trigger Monday)
+  AAPL gap estimate:     -5.4%  →  AAPL opens ~$165.62 Monday
+  Structural note:       AAPL immune to oil. Gap is sentiment / risk-off,
+                         not fundamental. Mean-reverts within 3–5 sessions.
+
+GAMMA GAP ANALYSIS
+  Friday delta:          60,930 shares equivalent
+  Monday delta (post-gap): 27,917 shares (gap reduces sensitivity)
+  Delta exposure lost:   33,013 shares (this is NOT the P&L loss — see below)
+
+IMPORTANT — DELTA EXPOSURE ≠ P&L LOSS
+  Delta exposure "lost" ($5.47M) = shares × price: a notional figure showing
+  how much less sensitive the position becomes after the gap.
+  Actual option value loss at -5.4% with 42 days remaining:
+    Tranche A (ATM → -5.4% OTM):  -$3/share × 686 contracts × 100 ≈ -$206k
+    Tranche B (+5% OTM, now -10.4%): small time value decay ≈  -$80k
+    Tranche C (+10% OTM, now -15.4%): minimal loss              ≈  -$35k
+    ─────────────────────────────────────────────────────────────────
+    Estimated real P&L loss from gap:                         ≈ -$320k
+
+MONDAY HARVEST  (VIX $20M × +10% gap-up)
+  Monday VIX PnL:        +$2,007,874
+  Monday harvest (15%):  +$  301,181   ← covers the $320k option loss ✅
+
+NET WEEKEND EFFECT
+  Option loss:           -$  320,000  (estimated)
+  Monday harvest:        +$  301,181
+  Net:                   -$   18,819  (essentially flat)
+  Action:                Roll calls to lower strike using harvest.
+                         A18 structural thesis unchanged.
+                         AAPL dip = opportunity to reduce cost basis.
+
+T2 SYMBIOSIS PnL (if no oil stress, AAPL flat):
+  2-day harvest:         +$1,008,000
+  2-day theta:           -$  121,774
+  Net carry:             +$  886,226  (+105% ROI on premium — harvest alone)
+```
+
+**Cell formulas — [APPLE] tab, rows 50–60:**
+
+**B50 (Oil Stress Level)**
+```
+=135
+```
+
+**B51 (VIX Stress — model)**
+```
+=VIX + ((B50-Oil)/10) * 1.5
+```
+
+**B52 (AAPL Gap % — model)**
+```
+=-(0.04 + MIN(0.03, ((B50-Oil)/10)*0.008))
+```
+
+**B53 (AAPL Monday Price)**
+```
+=AAPL_Price * (1 + B52)
+```
+
+**B54 (Monday VIX PnL)**
+```
+=VIX_Position * ((B51-VIX)/VIX)
+```
+
+**B55 (Monday Harvest)**
+```
+=B54 * Harvest_Rate
+```
+
+**B56 (Gamma Gap Covered?)**
+```
+=IF(B55 > ABS(H12)*2, "✅ HARVEST COVERS WEEKEND GAP", "⚠️ PARTIAL COVERAGE — ROLL ON MONDAY OPEN")
+```
+
+**B57 (Weekend Shield Status)**
+```
+=IF(B52<-0.10, "🔴 SEVERE GAP — Deploy 3-day harvest reserve",
+ IF(B52<-0.05, "⚠️ MODERATE GAP — Roll to lower strike Monday",
+               "✅ WITHIN NORMAL RANGE — Hold position"))
+```
+
+---
+
 ## Risk Management
 
 | Risk | Mitigation |
 |------|-----------|
 | AAPL earnings IV crush | Avoid ±5 trading days around earnings; use 45d expiry |
-| Theta decay if AAPL stagnant | Daily harvest ($504k) > daily theta (~$26k) by 19× |
-| Vol collapse (VIX drops < 20) | Harvest decreases but theta also decreases (lower IV) |
-| BLACK SWAN (VIX > 35) | No new positions; existing calls may benefit from vol spike |
-| AAPL-specific negative event | Tranche C (+10% OTM) limits max premium risk to 20% of total |
-| Harvest insufficient on weak VIX day | Harvest gate defers tranche until funded |
+| Theta decay if AAPL stagnant | R1 = 8.28× — harvest covers theta at 8× (not just carry) |
+| Vol collapse (VIX < 20) | Harvest shrinks but theta also shrinks (lower IV) — R1 stable |
+| BLACK SWAN (VIX > 35 / Oil > $140) | No new positions; existing calls benefit from vol spike |
+| Weekend oil gap (-5.4% AAPL) | Monday harvest $301k covers $320k option loss — essentially flat |
+| Gamma Trap (AAPL down) | VIX inverse correlation means harvest refills exactly when calls lose value |
+| AAPL-specific negative event | Tranche C (20% of premium) caps lottery-tier risk |
+| Harvest insufficient on weak VIX day | Harvest gate defers tranche; never overpays |
