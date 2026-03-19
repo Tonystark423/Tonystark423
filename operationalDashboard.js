@@ -968,6 +968,231 @@ function buildWeekendShieldReport({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 11b. SVE ENGINE — Stark Volatility-Energy Cross-Asset Signal (Patent Claims A/B/C)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim A.1 — Stark Energy-Vol Differential (S_evd)
+ *
+ * Measures divergence between energy backwardation and volatility contango.
+ * When energy futures are in backwardation (near > deferred) AND vol futures are
+ * in contango (deferred > spot), the market is simultaneously pricing near-term
+ * energy scarcity AND deferred equity fear — a structural mispricing.
+ *
+ * Signal ladder:
+ *   S_evd_norm ≥ 3.0 → STRONG BUY   (full ADV deployment + AAPL tranche)
+ *   S_evd_norm ≥ 2.0 → BUY          (standard Ghost Slicer)
+ *   0.0 – 2.0        → HOLD
+ *   ≤ -1.0           → REDUCE
+ *   ≤ -2.0           → EXIT
+ *
+ * @param {object} p
+ * @param {number} p.energyFront    Front-month WTI/Brent futures price
+ * @param {number} p.energyDeferred 3-month deferred energy futures price
+ * @param {number} p.vixSpot        CBOE spot VIX
+ * @param {number} p.vixFutures1m   1-month VIX futures (VX contract)
+ * @param {number[]} p.sevdHistory  Rolling 60-day S_evd readings for σ calculation
+ */
+function computeSevd({ energyFront, energyDeferred, vixSpot, vixFutures1m, sevdHistory = [] }) {
+  // Energy backwardation slope (positive = near-term scarcity premium)
+  const bEnergy = (energyFront - energyDeferred) / energyFront;
+
+  // Volatility contango slope (positive = market expects future fear > present)
+  const cVol = (vixFutures1m - vixSpot) / vixSpot;
+
+  // Divergence: energy pricing near fear, vol pricing deferred fear → tension
+  const sevd = bEnergy + cVol;
+
+  // Sigma normalize against rolling history
+  let sevdNorm = 0;
+  if (sevdHistory.length >= 10) {
+    const mu   = sevdHistory.reduce((s, v) => s + v, 0) / sevdHistory.length;
+    const variance = sevdHistory.reduce((s, v) => s + (v - mu) ** 2, 0) / sevdHistory.length;
+    const sigma = Math.sqrt(variance);
+    sevdNorm = sigma > 0 ? (sevd - mu) / sigma : 0;
+  }
+
+  // Signal gate (Claim A.3: BLACK SWAN checked by caller via engineState)
+  let signal, action;
+  if      (sevdNorm >= 3.0)  { signal = "STRONG BUY"; action = "Full ADV cap + AAPL tranche"; }
+  else if (sevdNorm >= 2.0)  { signal = "BUY";         action = "Standard Ghost Slicer"; }
+  else if (sevdNorm >= 0.0)  { signal = "HOLD";        action = "Maintain legs; no new seeding"; }
+  else if (sevdNorm >= -1.0) { signal = "REDUCE";      action = "Close weakest TRS leg; recycle to shield"; }
+  else                       { signal = "EXIT";         action = "Full TRS reduction; maximize cash buffer"; }
+
+  return {
+    bEnergy:     +bEnergy.toFixed(4),
+    cVol:        +cVol.toFixed(4),
+    sevd:        +sevd.toFixed(4),
+    sevdNorm:    +sevdNorm.toFixed(2),
+    signal,
+    action,
+    historyDays: sevdHistory.length,
+    interpretation: `Energy ${bEnergy > 0 ? "BACKWARDATION" : "contango"} + ` +
+                    `Vol ${cVol > 0 ? "CONTANGO" : "backwardation"} → ` +
+                    `S_evd ${sevdNorm >= 2 ? "DIVERGED (²σ+)" : "within normal range"}`,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim B.1–B.2 — Collateral Velocity (C_v) Processor
+ *
+ * Monitors M2 money supply and repo market stress to produce a dynamic
+ * collateral scalar C_v ∈ [0.50, 1.0].
+ *
+ *   M_required = M_base / C_v
+ *
+ * A falling C_v automatically thickens margin buffers BEFORE equity vol
+ * reflects the liquidity stress — 48–72hr temporal alpha (Claim B.4).
+ *
+ * @param {object} p
+ * @param {number} p.sofr            Current SOFR rate (decimal, e.g. 0.0530)
+ * @param {number} p.ffrTarget       Fed Funds Rate target (decimal, e.g. 0.0525)
+ * @param {number} p.m2Current       Current M2 money supply ($B)
+ * @param {number} p.m2FourWeeksAgo  M2 four weeks ago ($B)
+ * @param {number} p.marginBase      Base margin rate (default 0.15)
+ * @param {number} p.repoStressSigma 90-day σ of repo stress spread (for 3σ shock gate)
+ * @param {number} p.m2Sigma         90-day σ of ΔM2_4w (for 3σ shock gate)
+ */
+function computeCollateralVelocity({
+  sofr,
+  ffrTarget,
+  m2Current,
+  m2FourWeeksAgo,
+  marginBase      = 0.15,
+  repoStressSigma = 0.0015,   // ~15bps σ is a reasonable 90d baseline
+  m2Sigma         = 0.003,    // ~0.3% weekly σ baseline
+}) {
+  const repoStress  = sofr - ffrTarget;              // spread in decimal (e.g. 0.0020 = 20bps)
+  const deltaM2_4w  = (m2Current - m2FourWeeksAgo) / m2FourWeeksAgo;
+
+  // Component haircuts (capped so C_v floor = 0.50)
+  const repoComponent = Math.max(0, (repoStress / 0.0025) * 0.10);
+  const m2Component   = Math.max(0, (-deltaM2_4w / 0.005) * 0.15);
+
+  const cv = Math.max(0.50, 1 - Math.min(0.50, repoComponent + m2Component));
+
+  // 3σ shock gate — halt all new TRS seeding immediately (Claim B.1.d)
+  const repoShock = repoStress > 3 * repoStressSigma;
+  const m2Shock   = deltaM2_4w < -3 * m2Sigma;
+  const shockGate = repoShock || m2Shock;
+
+  const marginRequired = marginBase / cv;
+
+  let status;
+  if (shockGate)    { status = "SHOCK — HALT ALL SEEDING"; }
+  else if (cv < 0.65) { status = "CRITICAL"; }
+  else if (cv < 0.80) { status = "WARNING"; }
+  else if (cv < 0.93) { status = "WATCH"; }
+  else                { status = "NORMAL"; }
+
+  return {
+    sofr:            +sofr.toFixed(4),
+    ffrTarget:       +ffrTarget.toFixed(4),
+    repoStress:      +(repoStress * 10000).toFixed(1),   // in bps
+    deltaM2_4w:      +(deltaM2_4w * 100).toFixed(3),     // in pct
+    cv:              +cv.toFixed(3),
+    marginRequired:  +(marginRequired * 100).toFixed(2),  // in pct
+    marginBase:      +(marginBase * 100).toFixed(2),
+    marginIncrement: +((marginRequired - marginBase) * 100).toFixed(2),  // extra margin needed
+    shockGate,
+    status,
+    earlyWarning: !shockGate && (repoStress > repoStressSigma || deltaM2_4w < -m2Sigma)
+      ? "REPO/M2 STRESS BUILDING — 48–72hr lead on equity vol response"
+      : null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim B.3 — Sovereign Liquidity Flywheel
+ *
+ * Four-stage recursive loop:
+ *   Stage 1 HARVEST: VIX position × gap% × harvestRate → War Tax deposited as collateral
+ *   Stage 2 EARN:    collateral × SOFR → daily yield while idle
+ *   Stage 3 SIGNAL:  new SOFR reading updates C_v → margin buffers auto-adjust
+ *   Stage 4 DEPLOY:  (collateral × C_v) / marginRequired → new TRS notional capacity
+ *
+ * Self-funding break-even (Claim C.2 / Decoupling):
+ *   daily_WarTax + daily_CollYield > daily_TRS_Financing
+ *
+ * @param {object} p
+ * @param {number} p.existingCollateral  Collateral already deposited ($)
+ * @param {number} p.todayWarTax         New War Tax harvested today ($)
+ * @param {number} p.sofr                Current SOFR (decimal)
+ * @param {number} p.cv                  Collateral Velocity scalar from computeCollateralVelocity
+ * @param {number} p.marginRequired      Current required margin rate (decimal) from C_v processor
+ * @param {number} p.openTrsNotional     Total current open TRS notional ($)
+ * @param {number} p.trsFinancingSpread  TRS desk spread over SOFR (decimal)
+ * @param {number} p.maxNewNotional      Hard cap on new TRS notional ($) — risk limit
+ */
+function buildSovereignFlywheel({
+  existingCollateral,
+  todayWarTax,
+  sofr,
+  cv,
+  marginRequired,
+  openTrsNotional,
+  trsFinancingSpread = 0.0025,
+  maxNewNotional     = Infinity,
+}) {
+  // Stage 1: harvest deposited
+  const totalCollateral = existingCollateral + todayWarTax;
+
+  // Stage 2: collateral earns SOFR overnight
+  const dailyCollYield = Math.round(totalCollateral * sofr / 252);
+
+  // Stage 3: C_v already computed by caller (computeCollateralVelocity)
+  // Margin requirement after C_v scaling
+  const effectiveMargin = marginRequired;   // = marginBase / cv
+
+  // Stage 4: new TRS capacity this cycle
+  const rawTrsCapacity = (totalCollateral * cv) / effectiveMargin;
+  const incrementalTrsCap = Math.min(
+    Math.max(0, rawTrsCapacity - openTrsNotional),
+    maxNewNotional,
+  );
+
+  // Daily TRS financing cost on open notional
+  const dailyTrsFinancing = Math.round(openTrsNotional * (sofr + trsFinancingSpread) / 252);
+
+  // Break-even check: does flywheel sustain without new capital?
+  const dailyFlywheelIncome = todayWarTax + dailyCollYield;
+  const flywheelSurplus     = Math.round(dailyFlywheelIncome - dailyTrsFinancing);
+  const selfFunding         = flywheelSurplus >= 0;
+
+  // Flywheel health
+  let flywheelStatus;
+  if (!selfFunding && flywheelSurplus < -50_000)  { flywheelStatus = "DEFICIT — add to VIX position"; }
+  else if (!selfFunding)                           { flywheelStatus = "MARGINAL — monitor"; }
+  else if (flywheelSurplus > 200_000)              { flywheelStatus = "ACCELERATING — increase TRS notional"; }
+  else                                             { flywheelStatus = "SELF-FUNDING"; }
+
+  return {
+    // Stage outputs
+    totalCollateral:    Math.round(totalCollateral),
+    dailyCollYield,
+    effectiveMarginPct: +(effectiveMargin * 100).toFixed(2),
+    rawTrsCapacity:     Math.round(rawTrsCapacity),
+    incrementalTrsCap:  Math.round(incrementalTrsCap),
+    // Financing
+    dailyTrsFinancing,
+    dailyFlywheelIncome: Math.round(dailyFlywheelIncome),
+    flywheelSurplus,
+    selfFunding,
+    flywheelStatus,
+    // Recursion guidance
+    nextCycleCollateral: Math.round(totalCollateral + dailyCollYield),
+    note: selfFunding
+      ? "Orchard self-sustaining. Deploy incremental TRS capacity."
+      : "Harvest rate insufficient for current TRS notional. Reduce or increase VIX position.",
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 // 12. SUNDAY NIGHT SENTINEL  (v2.9 — Energy Arbitrage Engine)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1380,6 +1605,16 @@ function buildDashboard(inputs) {
     brentSunday              = null,
     brentFriday              = null,
     vixFuturesSunday         = null,
+    // SVE Engine inputs (optional — Claim A/B/C signals)
+    energyFront              = null,   // front-month WTI/Brent
+    energyDeferred           = null,   // 3-month deferred futures
+    vixFutures1m             = null,   // 1-month VIX futures (VX contract)
+    sevdHistory              = [],     // rolling 60-day S_evd readings
+    sofr                     = null,   // current SOFR rate (decimal)
+    ffrTarget                = null,   // Fed Funds Rate target (decimal)
+    m2Current                = null,   // current M2 ($B)
+    m2FourWeeksAgo           = null,   // M2 four weeks ago ($B)
+    collateralDeposited      = 0,      // existing flywheel collateral ($)
   } = inputs;
 
   // Layer 1: engine state
@@ -1491,7 +1726,28 @@ function buildDashboard(inputs) {
     aum,
   });
 
-  // Layer 9: alerts
+  // Layer 9b: SVE Engine — Claim A (S_evd signal), B (C_v), B.3 (flywheel)
+  const sveSignal = energyFront !== null && energyDeferred !== null && vixFutures1m !== null
+    ? computeSevd({ energyFront, energyDeferred, vixSpot: vix, vixFutures1m, sevdHistory })
+    : null;
+
+  const collateralVelocity = sofr !== null && ffrTarget !== null && m2Current !== null
+    ? computeCollateralVelocity({ sofr, ffrTarget, m2Current, m2FourWeeksAgo: m2FourWeeksAgo ?? m2Current })
+    : null;
+
+  const sovereignFlywheel = collateralVelocity && !collateralVelocity.shockGate
+    ? buildSovereignFlywheel({
+        existingCollateral:  collateralDeposited,
+        todayWarTax:         harvestPlan.harvestAmount,
+        sofr,
+        cv:                  collateralVelocity.cv,
+        marginRequired:      collateralVelocity.marginRequired / 100,
+        openTrsNotional:     trsTracker.totals.openNotional,
+        maxNewNotional:      aum * (getAdvCap(aum) * 5),   // risk limit: 5 clips
+      })
+    : null;
+
+  // Layer 10: alerts
   const alerts = buildAlerts(vix, oil, gex, engineState, alphaRisk, trsTracker);
 
   return {
@@ -1510,6 +1766,9 @@ function buildDashboard(inputs) {
     gammaSqueezeProjection,
     weekendShield,
     sundayNightSentinel,
+    sveSignal,
+    collateralVelocity,
+    sovereignFlywheel,
     closingCross,
     alerts,
   };
