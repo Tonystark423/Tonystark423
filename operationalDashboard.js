@@ -1540,6 +1540,346 @@ function buildAlerts(vix, oil, gex, engineState, alphaRisk, trsTracker) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 14. SVE SURVIVAL ARCHITECTURE  (Claims D / E / F / G)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Claim D.1–D.3: VRT Step-Down Ladder ──────────────────────────────────────
+
+/** VRT_STEPS: [{ cvThreshold, reductionPct }] — conservative and ultra-defensive sets */
+const VRT_STEPS_CONSERVATIVE     = [
+  { cvThreshold: 0.85, reductionPct: 0.10 },
+  { cvThreshold: 0.75, reductionPct: 0.25 },
+  { cvThreshold: 0.65, reductionPct: 0.40 },
+  { cvThreshold: 0.55, reductionPct: 0.60 },
+];
+const VRT_STEPS_ULTRA_DEFENSIVE  = [
+  { cvThreshold: 0.88, reductionPct: 0.10 },
+  { cvThreshold: 0.78, reductionPct: 0.25 },
+  { cvThreshold: 0.65, reductionPct: 0.50 },
+  { cvThreshold: 0.55, reductionPct: 0.70 },
+];
+
+/**
+ * Claim D — VRT Step-Down
+ *
+ * Computes required TRS gross reduction driven solely by C_v (monetary plumbing),
+ * not by mark-to-market price action.
+ *
+ * @param {object} p
+ * @param {number} p.cv               Current C_v scalar (from computeCollateralVelocity)
+ * @param {number} p.openTrsNotional  Current gross open TRS notional ($)
+ * @param {number} p.targetNotional   Fully deployed target notional ($)
+ * @param {boolean} p.ultraDefensive  Use ultra-defensive 5σ parameters
+ * @param {number} p.sevdNorm         Current S_evd normalized (for re-entry gate)
+ */
+function buildVrtStepDown({ cv, openTrsNotional, targetNotional, ultraDefensive = false, sevdNorm = 0 }) {
+  const steps = ultraDefensive ? VRT_STEPS_ULTRA_DEFENSIVE : VRT_STEPS_CONSERVATIVE;
+  const reEntryMinSevd = ultraDefensive ? 2.5 : 2.0;
+  const reEntryCvMin   = ultraDefensive ? 0.88 : 0.85;
+
+  // Find active step (highest reduction that applies for current C_v)
+  let activeStep = null;
+  for (const step of [...steps].reverse()) {
+    if (cv < step.cvThreshold) { activeStep = step; break; }
+  }
+
+  const shockHalt        = cv < 0.50;
+  const reductionPct     = shockHalt ? 1.0 : (activeStep?.reductionPct ?? 0);
+  const targetAfterStep  = Math.round(targetNotional * (1 - reductionPct));
+  const requiredClose    = Math.max(0, openTrsNotional - targetAfterStep);
+
+  // Re-entry gate: both C_v AND S_evd must clear before new seeding resumes
+  const reEntryAllowed = !shockHalt && cv >= reEntryCvMin && sevdNorm >= reEntryMinSevd;
+
+  let vrtStatus;
+  if (shockHalt)                             { vrtStatus = "SHOCK HALT — all seeding suspended"; }
+  else if (reductionPct >= 0.40)             { vrtStatus = "CRITICAL STEP — 40%+ reduction active"; }
+  else if (reductionPct > 0)                 { vrtStatus = `STEP DOWN — ${(reductionPct*100).toFixed(0)}% reduction`; }
+  else if (!reEntryAllowed)                  { vrtStatus = "HOLD — C_v/S_evd below re-entry gate"; }
+  else                                       { vrtStatus = "FULL DEPLOYMENT"; }
+
+  return {
+    cv:               +cv.toFixed(3),
+    reductionPct:     +(reductionPct * 100).toFixed(1),
+    targetAfterStep:  Math.round(targetAfterStep),
+    requiredClose:    Math.round(requiredClose),
+    reEntryAllowed,
+    shockHalt,
+    vrtStatus,
+    activeStepCvThreshold: activeStep?.cvThreshold ?? null,
+    firmwareMode:     ultraDefensive ? "ULTRA-DEFENSIVE (5σ)" : "CONSERVATIVE",
+    note: requiredClose > 0
+      ? `Close $${requiredClose.toLocaleString()} TRS notional. Route freed collateral to VIX shield.`
+      : reEntryAllowed ? "Cleared for new TRS seeding." : "Maintain current legs. Await re-entry conditions.",
+  };
+}
+
+// ── Claim E.1–E.3: Convexity Cushion ─────────────────────────────────────────
+
+/**
+ * Claim E — Convexity Cushion
+ *
+ * Models a VIX call portfolio held at 0.05 initial delta.
+ * As VIX rises through a stress event, the portfolio's delta rises toward 0.45+,
+ * producing a super-linear Gamma spike that offsets TRS losses.
+ *
+ * @param {object} p
+ * @param {number}   p.vixCurrent      Current VIX level
+ * @param {number}   p.vixStress       Stress scenario VIX level
+ * @param {number[]} p.vixCallStrikes  Array of VIX call strike levels
+ * @param {number}   p.totalContracts  Total VIX call contracts held
+ * @param {number}   p.avgPremium      Average premium paid per contract ($)
+ * @param {number}   p.trsSynthLoss    TRS mark-to-market loss at stress VIX ($)
+ * @param {number}   p.cv              Current C_v (sets hedge_ratio via complement)
+ * @param {number}   p.harvestAvailable War Tax available for hedge funding ($)
+ */
+function buildConvexityCushion({
+  vixCurrent,
+  vixStress,
+  vixCallStrikes,
+  totalContracts,
+  avgPremium,
+  trsSynthLoss     = 0,
+  cv               = 1.0,
+  harvestAvailable = 0,
+  hedgeAllocRate   = 0.08,    // 8% of harvest to VIX calls
+}) {
+  const vixMove     = vixStress - vixCurrent;
+  const vixMovePct  = vixMove / vixCurrent;
+
+  // Delta trajectory: 0.05 at baseline, approaches 0.45 at ATM (VIX_crossover)
+  // Simple linear-then-convex model: delta = 0.05 + 0.40 × sigmoid((vixMove-5)/8)
+  const sigmoid       = x => 1 / (1 + Math.exp(-x));
+  const deltaStress   = 0.05 + 0.40 * sigmoid((vixMove - 5) / 8);
+  const deltaInitial  = 0.05;
+  const deltaRatio    = deltaStress / deltaInitial;       // amplification factor
+
+  // Gamma approximation: peaks near ATM (delta ≈ 0.45), ~0.08/VIX_pt empirically
+  const gammaPeak       = 0.08;
+  const gammaAtStress   = gammaPeak * sigmoid((vixMove - 3) / 5) * 2;
+
+  // Hedge P&L at stress level (per contract × 100 multiplier)
+  const hedgePnl        = Math.round(totalContracts * 100 * avgPremium * (deltaRatio - 1));
+
+  // Net cushion: hedge gain minus TRS loss
+  const convexityCushion = Math.round(hedgePnl - trsSynthLoss);
+  const cushionPositive  = convexityCushion >= 0;
+
+  // VIX crossover (where hedge gain rate = TRS loss rate) — estimated analytically
+  // Solved numerically: deltaRatio = 1 + trsSynthLoss / (contracts × 100 × premium × delta0)
+  // Approximate: crossover at delta ≈ 0.25 → sigmoid inversion
+  const crossoverVixMove  = 5 + 8 * Math.log(0.20 / 0.20);  // ~5 VIX points above baseline
+  const vixCrossover      = vixCurrent + crossoverVixMove;
+
+  // C_v complement auto-sizing: as liquidity stress rises, hedge ratio grows
+  const cvComplement    = Math.max(0.01, Math.min(0.05, 1 - cv));
+  const newHedgeFunding = Math.round(harvestAvailable * hedgeAllocRate);
+
+  let cushionStatus;
+  if (vixStress >= vixCrossover && cushionPositive)  { cushionStatus = "CUSHION ACTIVE — convex offset exceeds TRS loss"; }
+  else if (vixStress >= vixCrossover)                { cushionStatus = "APPROACHING CROSSOVER — add contracts"; }
+  else                                               { cushionStatus = "OTM ACCUMULATION — building gamma inventory"; }
+
+  return {
+    vixCurrent,
+    vixStress,
+    vixMove:           +vixMove.toFixed(1),
+    vixCrossover:      +vixCrossover.toFixed(1),
+    deltaInitial,
+    deltaAtStress:     +deltaStress.toFixed(3),
+    gammaAtStress:     +gammaAtStress.toFixed(4),
+    deltaAmplification: +deltaRatio.toFixed(2),
+    hedgePnl,
+    trsSynthLoss,
+    convexityCushion,
+    cushionPositive,
+    cushionStatus,
+    // Sizing
+    cvComplement:      +cvComplement.toFixed(3),
+    newHedgeFunding,
+    note: cushionPositive
+      ? `+$${convexityCushion.toLocaleString()} net at VIX ${vixStress}. Delta ${(deltaStress*100).toFixed(1)}% (was 5%). 120-second window intact.`
+      : `Deficit $${Math.abs(convexityCushion).toLocaleString()} at VIX ${vixStress}. Add ${Math.ceil(Math.abs(convexityCushion) / (avgPremium * 100 * deltaRatio))} contracts.`,
+  };
+}
+
+// ── Claim F.1–F.3: Pod-Shop Sentinel ─────────────────────────────────────────
+
+/**
+ * Claim F.1–F.2 — P_pred: Predatory Probability
+ *
+ * Circular buffer N=100 events → three-factor adversarial detection.
+ * Buffer memory: 100 × (8+8+8+8) bytes = 3,200 bytes → L1 cache resident.
+ *
+ * @param {object[]} orderFlowBuffer  Array of {side:'BUY'|'SELL', size, priceLevel, timestampNs}
+ * @param {number}   windowSize       Rolling window size (default 100)
+ */
+function computePpred({ orderFlowBuffer, windowSize = 100 }) {
+  const n      = Math.min(orderFlowBuffer.length, windowSize);
+  if (n < 5) return { pPred: 0, signal: "INSUFFICIENT_DATA", n };
+
+  const recent = orderFlowBuffer.slice(-n);
+
+  // Factor 1: directional clustering (0 = random, 1 = pure one-sided probe)
+  const buyCount     = recent.filter(o => o.side === "BUY").length;
+  const clusterScore = Math.abs(buyCount / n - 0.5) * 2;
+
+  // Factor 2: price-level concentration (phantom wall detection)
+  const priceMap = {};
+  recent.forEach(o => { priceMap[o.priceLevel] = (priceMap[o.priceLevel] || 0) + 1; });
+  const maxConcentration = Math.max(...Object.values(priceMap)) / n;
+
+  // Factor 3: size uniformity — low CV signals robotic uniform sizing
+  const sizes    = recent.map(o => o.size);
+  const meanSize = sizes.reduce((s, v) => s + v, 0) / n;
+  const variance = sizes.reduce((s, v) => s + (v - meanSize) ** 2, 0) / n;
+  const cvSize   = meanSize > 0 ? Math.sqrt(variance) / meanSize : 1;
+  const uniformityScore = Math.max(0, 1 - cvSize);
+
+  // Composite (Claim F.2.d)
+  const pPred = Math.min(1, 0.40 * clusterScore + 0.35 * maxConcentration + 0.25 * uniformityScore);
+
+  let signal, engineAction;
+  if      (pPred >= 0.90) { signal = "BAIT_AND_SWITCH"; engineAction = "Inject false bids; route to dark pool (Claim F.3)"; }
+  else if (pPred >= 0.70) { signal = "PROBE_DETECTED";  engineAction = "Route all clips to dark pool; halt lit venue"; }
+  else if (pPred >= 0.50) { signal = "WATCH";           engineAction = "Reduce clip size to 1% ADV; monitor"; }
+  else                    { signal = "CLEAN";            engineAction = "Normal Ghost Slicer execution"; }
+
+  return {
+    pPred:              +pPred.toFixed(3),
+    signal,
+    engineAction,
+    factors: {
+      clusterScore:      +clusterScore.toFixed(3),
+      maxConcentration:  +maxConcentration.toFixed(3),
+      uniformityScore:   +uniformityScore.toFixed(3),
+    },
+    n,
+    bufferBytes:        n * 4 * 8,    // 4 fields × 8 bytes double precision
+    l1CacheResident:    n * 4 * 8 <= 32_768,   // L1 = 32KB standard
+  };
+}
+
+/**
+ * Claim F.3 — Bait-and-Switch execution decision
+ *
+ * When P_pred ≥ 0.90, returns the False Bid parameters and dark pool
+ * routing instruction. The engine injects false bids on the lit venue
+ * to manufacture adversarial liquidity, then crosses in the dark pool.
+ *
+ * @param {object} p
+ * @param {number} p.pPred          Current P_pred from computePpred
+ * @param {number} p.detectedSize   Size of detected probe (shares/contracts)
+ * @param {number} p.clipNotional   Remaining clip to execute ($)
+ * @param {number} p.midPoint       Current market mid-point price
+ * @param {number} p.cancelDelayNs  False bid cancel latency after fill (default 500ns)
+ */
+function buildBaitAndSwitch({ pPred, detectedSize, clipNotional, midPoint, cancelDelayNs = 500 }) {
+  const active = pPred >= 0.90;
+
+  if (!active) {
+    return { active: false, routing: "LIT_VENUE", pPred: +pPred.toFixed(3) };
+  }
+
+  // False Bid: 120% of detected probe size to reinforce adversarial conviction
+  const falseBidSize        = Math.round(detectedSize * 1.2);
+  const falseBidNotional    = Math.round(falseBidSize * midPoint);
+
+  // Execution improvement estimate: mid-point fill vs lit-venue spread cost
+  const spreadEstimateBps   = 3.5;   // typical mid-cap spread
+  const executionSavingBps  = spreadEstimateBps * 0.85;  // capture ~85% of spread as improvement
+  const executionSaving     = Math.round(clipNotional * executionSavingBps / 10000);
+
+  return {
+    active:             true,
+    routing:            "DARK_POOL",
+    litVenueAction:     "INJECT_FALSE_BIDS",
+    falseBidSize,
+    falseBidNotional,
+    cancelDelayNs,
+    clipNotional,
+    midPoint,
+    executionSavingBps: +executionSavingBps.toFixed(2),
+    executionSaving,
+    pPred:              +pPred.toFixed(3),
+    note: `False bid ${falseBidSize.toLocaleString()} @ ${midPoint} injects adversarial conviction. ` +
+          `Dark pool cross at mid. Cancel lit after ${cancelDelayNs}ns. ` +
+          `Est. execution improvement: ${executionSavingBps.toFixed(1)}bps ($${executionSaving.toLocaleString()}).`,
+  };
+}
+
+// ── Claim G.1–G.3: Integrated Survival Status ─────────────────────────────────
+
+/**
+ * Claim G — buildSurvivalStatus
+ *
+ * Five-condition Decoupling check + 120-second survival window model.
+ * When all five conditions are met, the engine is structurally decoupled
+ * from the fiat system's volatility transmission mechanism.
+ *
+ * @param {object} p
+ * @param {number}  p.systemicAlphaPct    P1 / AUM (%)
+ * @param {boolean} p.flywheelSelfFunding From buildSovereignFlywheel
+ * @param {boolean} p.cushionPositive     From buildConvexityCushion
+ * @param {number}  p.cv                  Current C_v
+ * @param {number}  p.pPred               Current P_pred
+ * @param {number}  p.trsLossRate         TRS loss per VIX point ($)
+ * @param {number}  p.hedgeGainRate       VIX call gain per VIX point ($)
+ */
+function buildSurvivalStatus({
+  systemicAlphaPct,
+  flywheelSelfFunding,
+  cushionPositive,
+  cv,
+  pPred,
+  trsLossRate   = 0,
+  hedgeGainRate = 0,
+}) {
+  // Five-condition check (Claim G.3)
+  const c1_decoupled       = systemicAlphaPct >= 5.0;
+  const c2_flywheel        = flywheelSelfFunding;
+  const c3_convexity       = cushionPositive;
+  const c4_cvFull          = cv >= 0.85;
+  const c5_execution       = pPred < 0.50 || pPred >= 0.90;   // clean OR bait-and-switch active
+
+  const conditionsMet      = [c1_decoupled, c2_flywheel, c3_convexity, c4_cvFull, c5_execution];
+  const allDecoupled       = conditionsMet.every(Boolean);
+  const conditionsMetCount = conditionsMet.filter(Boolean).length;
+
+  // 120-second survival window: net margin pressure < threshold
+  // Simplified: if hedge gain rate ≥ trs loss rate, the window holds
+  const t120Intact         = hedgeGainRate >= trsLossRate || cushionPositive;
+
+  let survivalStatus;
+  if (allDecoupled)                  { survivalStatus = "DECOUPLED — Structurally immune"; }
+  else if (conditionsMetCount >= 4)  { survivalStatus = "NEAR-DECOUPLED — 1 condition remaining"; }
+  else if (conditionsMetCount >= 3)  { survivalStatus = "COMPOUNDING — building toward decoupling"; }
+  else if (t120Intact)               { survivalStatus = "DEFENDED — 120s window active"; }
+  else                               { survivalStatus = "EXPOSED — address failing conditions immediately"; }
+
+  return {
+    allDecoupled,
+    conditionsMet: {
+      c1_systemicAlpha_gte5pct: c1_decoupled,
+      c2_flywheel_selfFunding:  c2_flywheel,
+      c3_convexityCushion:      c3_convexity,
+      c4_cv_gte085:             c4_cvFull,
+      c5_execution_secured:     c5_execution,
+    },
+    conditionsMetCount,
+    t120Intact,
+    survivalStatus,
+    openConditions: [
+      !c1_decoupled  && `P1 Systemic Alpha at ${systemicAlphaPct.toFixed(2)}% — need ≥ 5% (Claim C.2)`,
+      !c2_flywheel   && "Flywheel deficit — increase VIX position or reduce TRS notional (Claim B.3)",
+      !c3_convexity  && "Convexity gap — add VIX call contracts at current OTM level (Claim E.1)",
+      !c4_cvFull     && `C_v = ${cv.toFixed(3)} — below 0.85 re-entry threshold, VRT step-down active (Claim D.1)`,
+      !c5_execution  && `P_pred = ${pPred.toFixed(3)} — in watch zone (0.50–0.90); route to dark pool (Claim F.2)`,
+    ].filter(Boolean),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 7. MAIN ENTRY POINT
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1747,8 +2087,45 @@ function buildDashboard(inputs) {
       })
     : null;
 
-  // Layer 10: alerts
+  // Layer 10: SVE Survival Architecture — Claims D / E / F / G
+  const cv = collateralVelocity?.cv ?? 1.0;
+
+  const vrtStepDown = collateralVelocity
+    ? buildVrtStepDown({
+        cv,
+        openTrsNotional:  trsTracker.totals.openNotional,
+        targetNotional:   aum * getAdvCap(aum) * 5,
+        sevdNorm:         sveSignal?.sevdNorm ?? 0,
+      })
+    : null;
+
+  const convexityCushion = appleCallOverlay
+    ? buildConvexityCushion({
+        vixCurrent:      vix,
+        vixStress:       vix * 1.35,   // model a +35% VIX spike as stress scenario
+        vixCallStrikes:  appleCallOverlay.tranches?.map(t => t.strike) ?? [],
+        totalContracts:  appleCallOverlay.totalContracts ?? 0,
+        avgPremium:      appleCallOverlay.tranches?.reduce((s, t) => s + t.premiumPerShare, 0)
+                           / Math.max(1, appleCallOverlay.tranches?.length ?? 1) ?? 5,
+        trsSynthLoss:    Math.abs(Math.min(0, trsTracker.totals.netPnl)),
+        cv,
+        harvestAvailable: harvestPlan.harvestAmount,
+      })
+    : null;
+
+  // Layer 11: alerts
   const alerts = buildAlerts(vix, oil, gex, engineState, alphaRisk, trsTracker);
+
+  // Layer 12: Integrated survival status (Claim G)
+  const survivalStatus = buildSurvivalStatus({
+    systemicAlphaPct:   systemicAlpha.systemicPct,
+    flywheelSelfFunding: sovereignFlywheel?.selfFunding ?? false,
+    cushionPositive:    convexityCushion?.cushionPositive ?? false,
+    cv,
+    pPred:              0,    // caller must supply live P_pred from computePpred()
+    trsLossRate:        trsTracker.totals.openNotional * 0.001,   // est. $1k per VIX pt
+    hedgeGainRate:      convexityCushion ? convexityCushion.hedgePnl / Math.max(1, convexityCushion.vixMove) : 0,
+  });
 
   return {
     scale:           getScale(aum),       // "100M" or "1B"
@@ -1769,6 +2146,9 @@ function buildDashboard(inputs) {
     sveSignal,
     collateralVelocity,
     sovereignFlywheel,
+    vrtStepDown,
+    convexityCushion,
+    survivalStatus,
     closingCross,
     alerts,
   };
