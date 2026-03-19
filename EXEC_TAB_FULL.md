@@ -1,0 +1,191 @@
+# [EXEC] Tab — Full Pre-Formatted Layout
+# VIX Alpha → 493 Workflow at $1B Scale
+
+---
+
+## Sheet Layout
+
+```
+     A                  B                    C                D               E
+1  [INPUTS]           VALUE              [STATUS]
+2  ──────────────────────────────────────────────────────────────────────────────
+3  VIX                [live]             ENGINE MODE      ← B4 formula
+4  GEX                [live]             ROUTING          ← H4 formula
+5  Oil ($/bbl)        [live]             EXEC PATH        ← I4 formula
+6  AUM ($)            [live]
+7  ADV (basket avg)   [live]
+8
+9  ──────────────────────────────────────────────────────────────────────────────
+10 [PnL TRACKER]
+11 ──────────────────────────────────────────────────────────────────────────────
+12 VIX Premium In     [live]             Deployable Cash  ← L4 formula
+13 493 Basket Cost    [live]             Net PnL          ← M4 formula
+14 Open TRS Notional  [live]             PnL %            ← N4 formula
+15
+16 ──────────────────────────────────────────────────────────────────────────────
+17 [RECYCLE LIST]     WEIGHT   NOTIONAL  ADV      ROUTING      STATUS
+18 ──────────────────────────────────────────────────────────────────────────────
+19 MSFT               18%      $180M     [live]   ← H19        ← J19
+20 V                  15%      $150M     [live]   ← H20        ← J20
+21 MA                 15%      $150M     [live]   ← H21        ← J21
+22 ACN                12%      $120M     [live]   ← H22        ← J22
+23 UNH                10%      $100M     [live]   ← H23        ← J23
+24 JNJ                10%      $100M     [live]   ← H24        ← J24
+25 ABBV                8%       $80M     [live]   ← H25        ← J25
+26 PG                  5%       $50M     [live]   ← H26        ← J26
+27 COST                5%       $50M     [live]   ← H27        ← J27
+28 BRK.B               2%       $20M     [live]   ← H28        ← J28
+29
+30 ──────────────────────────────────────────────────────────────────────────────
+31 [ALERTS]
+32 ──────────────────────────────────────────────────────────────────────────────
+33 Shield Alert       ← O33
+34 Termination Alert  ← O34
+35 Rebalance Alert    ← O35
+```
+
+---
+
+## Cell-by-Cell Formula Reference
+
+### Section 1 — Engine Mode
+
+**B4 (Engine Mode)**
+```
+=IF(AND(B1>25,B2<0),   "🛡️ SHIELD ACTIVE: HOLD VIX / PROTECT 493",
+ IF(AND(B1>22,B3>115), "♻️ RECYCLE: HARVEST VIX / BUY ENERGY 493",
+                        "🌊 SYMBIOSIS: LONG 493 ALPHA"))
+```
+
+**H4 (Routing Decision)**
+```
+=IF((B6/B7)>0.05, "EXECUTE VIA SWAP", "EXECUTE VIA DARK POOL")
+```
+
+**I4 (Execution Path)**
+```
+=IF(H4="EXECUTE VIA SWAP", "→ TRS Desk", "→ Dark Pool Broker")
+```
+
+---
+
+### Section 2 — PnL & Deployable Cash
+
+**L4 (Deployable Cash)**
+```
+=B12-B13
+```
+> VIX Premium collected minus cost of 493 basket already deployed.
+
+**M4 (Net PnL)**
+```
+=B12-B13-B14*0.0025
+```
+> Net of VIX premium, basket cost, and estimated 25bps TRS financing spread.
+
+**N4 (PnL %)**
+```
+=M4/B6
+```
+> Net PnL as a percentage of total AUM.
+
+---
+
+### Section 3 — Per-Name Routing (rows 19–28)
+
+**H19:H28 (Per-Name Routing)** — paste into H19, drag to H28:
+```
+=IF((C19/D19)>0.05, "SWAP", "DARK POOL")
+```
+
+**J19:J28 (Per-Name Status)** — paste into J19, drag to J28:
+```
+=IF(AND($B$1>25,$B$2<0),   "🔒 HOLD — Shield Active",
+ IF(AND($B$1>22,$B$3>115), "♻️ DEPLOY — Recycle Phase",
+                             "🌊 STANDBY — Symbiosis"))
+```
+
+---
+
+### Section 4 — Alerts
+
+**O33 (Shield Alert)**
+```
+=IF(AND(B1>25,B2<0), "⚠️ SHIELD PHASE: Do NOT sell VIX. Hold 493 floor.", "")
+```
+
+**O34 (Termination Alert)**
+```
+=IF(OR(B1>35,B2<-500000000), "🚨 TERMINATE TRS: VIX>35 or GEX<-$500M. Unwind immediately.", "")
+```
+
+**O35 (Rebalance Alert)**
+```
+=IF(AND(B1>22,B3>115,B1<=25), "🔄 REBALANCE: Rotate into Tier 1 names. Deploy Recycle List.", "")
+```
+
+---
+
+## Conditional Formatting Rules
+
+| Range | Condition | Fill Color |
+|-------|-----------|------------|
+| B4 | contains "SHIELD" | Red `#FF0000` |
+| B4 | contains "RECYCLE" | Orange `#FF6600` |
+| B4 | contains "SYMBIOSIS" | Green `#00AA44` |
+| H4 | contains "SWAP" | Yellow `#FFDD00` |
+| H4 | contains "DARK POOL" | Blue `#0044FF` |
+| O33 | not empty | Red `#FF0000` |
+| O34 | not empty | Dark Red `#880000` |
+| O35 | not empty | Orange `#FF6600` |
+| N4 | > 0 | Green `#00AA44` |
+| N4 | < 0 | Red `#FF0000` |
+
+---
+
+## Named Ranges
+
+| Name | Cell | Value |
+|------|------|-------|
+| `VIX` | B1 | Live VIX index |
+| `GEX` | B2 | Live gamma exposure ($) |
+| `Oil` | B3 | Live crude price ($/bbl) |
+| `AUM_Allocation` | B6 | Total AUM in dollars |
+| `Average_Daily_Volume` | B7 | Weighted avg ADV across basket |
+| `VIX_Premium_In` | B12 | Cumulative VIX premium collected |
+| `Basket_Cost` | B13 | Cumulative 493 basket deployment cost |
+| `TRS_Notional` | B14 | Current open TRS notional |
+
+---
+
+## Workflow Summary
+
+```
+[INPUTS: VIX / GEX / Oil / AUM]
+            │
+            ▼
+      B4: Engine Mode
+   SHIELD / RECYCLE / SYMBIOSIS
+            │
+     ┌──────┴──────┐
+  SHIELD        RECYCLE
+     │              │
+  Hold VIX      H4 Routing
+  No deploy    (AUM/ADV > 5%?)
+                   │
+             ┌─────┴─────┐
+           SWAP       DARK POOL
+             │              │
+          TRS Desk    Dark Pool Broker
+             │              │
+             └──────┬────────┘
+                    │
+             Deploy J19:J28
+             (per-name status)
+                    │
+             L4: Deployable Cash
+             M4: Net PnL
+             N4: PnL %
+                    │
+             O33/O34/O35: Alerts
+```
