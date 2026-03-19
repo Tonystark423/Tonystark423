@@ -1,5 +1,5 @@
 /**
- * OPERATIONAL DASHBOARD ENGINE v2.2
+ * OPERATIONAL DASHBOARD ENGINE v2.9
  * $1B / $100M Live Alpha vs Risk — Unified Shield / Recycle / Execution / TRS
  *
  * Entry point: buildDashboard(inputs)
@@ -968,7 +968,215 @@ function buildWeekendShieldReport({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 12. SYSTEMIC ALPHA TRACKER  (LENS tab — Cell P1)
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. SUNDAY NIGHT SENTINEL  (v2.9 — Energy Arbitrage Engine)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The Sunday Night Sentinel runs when Brent Crude futures open (~6 PM ET Sunday).
+ * It treats geopolitical energy volatility not as threat but as rebalancing catalyst.
+ *
+ * STRUCTURAL INVERSION — the "Energy Arbitrage":
+ *
+ *   Cloud AI firms (MSFT, GOOG) are SHORT the grid:
+ *     Every $1 Brent spike → direct tax on data-center power contracts → margin compression.
+ *     Their shareholders panic. They buy VIX protection. That panic is your income.
+ *
+ *   Apple (AAPL) is LONG the battery:
+ *     Inference runs on A18/M4 silicon. The electrical bill is outsourced to the user.
+ *     Oil at $135 does not touch a single line of Apple's P&L.
+ *
+ *   The Arbitrage:
+ *     Oil spike → Cloud AI Alumni panic-buy VIX → your VIX long harvests that panic
+ *               → harvest funds AAPL calls at risk-off discount
+ *               → AAPL reprices as the only energy-sovereign Mag 7 member
+ *     Net: every energy shock makes your position STRONGER, not weaker.
+ *
+ * Energy Arbitrage Index (EAI):
+ *   EAI = War_Tax_Generated / AAPL_Call_Discount_Value
+ *   EAI > 1.0: the oil spike generates more harvest than the AAPL dip costs.
+ *              You come out ahead on every energy shock. The "Redwoods" pay for
+ *              the "Orchard" every time they fill their data centers.
+ *
+ * Sunday Sentinel outputs:
+ *   - sentinelStatus:    ALERT / STANDBY / DEPLOY
+ *   - energyArbitrage:   { warTax, aaplDiscount, eai, netAdvantage }
+ *   - mondayBrief:       exact 9:30 AM execution instructions
+ *   - regimeMonday:      projected engine mode at open
+ *
+ * inputs: {
+ *   brentSunday        : Brent Crude futures price Sunday evening
+ *   brentFriday        : Friday closing Brent price
+ *   vixFuturesSunday   : VIX futures Sunday evening
+ *   vixFriday          : Friday closing VIX
+ *   aaplPremarket      : AAPL pre-market indication (null if unavailable)
+ *   aaplFriday         : AAPL Friday close
+ *   oilSensitivity     : VIX pts per $10 Brent spike (default 1.5)
+ *   vixPosition        : VIX long notional
+ *   harvestRate        : fraction of VIX PnL to harvest (default 0.15)
+ *   aaplIV             : AAPL implied vol (Friday close)
+ *   appleTranches      : from appleCallOverlay.tranches (existing position)
+ *   daysLeftToExpiry   : days remaining on calls
+ *   aum                : total AUM
+ * }
+ */
+function buildSundayNightSentinel({
+  brentSunday,
+  brentFriday,
+  vixFuturesSunday,
+  vixFriday,
+  aaplPremarket     = null,
+  aaplFriday,
+  oilSensitivity    = 1.5,
+  vixPosition,
+  harvestRate       = 0.15,
+  aaplIV            = 0.26,
+  appleTranches     = [],
+  daysLeftToExpiry  = 42,
+  aum,
+}) {
+  // ── 1. Energy gap assessment ─────────────────────────────────────────────
+  const brentGap     = brentSunday - brentFriday;
+  const brentGapPct  = brentGap / brentFriday;
+  const brentAlert   = brentSunday >= 120;   // $120+ triggers Cloud AI margin fear
+
+  // ── 2. VIX futures projection ─────────────────────────────────────────────
+  const vixGapFromOil   = (brentGap / 10) * oilSensitivity;
+  const vixProjected    = Math.max(vixFuturesSunday, vixFriday + vixGapFromOil);
+  const vixGapPct       = (vixProjected - vixFriday) / vixFriday;
+
+  // ── 3. War Tax — harvest from Monday VIX gap-up ───────────────────────────
+  const vixMonPnl    = Math.round(vixPosition * vixGapPct);
+  const warTax       = Math.round(vixMonPnl * harvestRate);
+
+  // ── 4. AAPL gap estimate at Monday open ───────────────────────────────────
+  // Risk-off gap: correlated with VIX spike. But AAPL structurally immune to oil.
+  // Model: -2% base risk-off + up to -2% additional for extreme VIX (>30).
+  const riskOffBase  = -0.02;
+  const vixExtra     = Math.max(0, (vixProjected - 27) / 27 * -0.02);
+  const aaplGapPct   = brentAlert ? (riskOffBase + vixExtra) : 0;
+  const aaplMonday   = aaplPremarket ?? aaplFriday * (1 + aaplGapPct);
+
+  // ── 5. AAPL call discount — calls are cheaper after the risk-off gap ───────
+  // Lower AAPL price = more OTM = lower premium required for same strike.
+  // This is the "steeper discount" — you buy the same optionality for less.
+  const avgPremiumFriday = appleTranches.length > 0
+    ? appleTranches.reduce((s, t) => s + t.premiumPerShare, 0) / appleTranches.length
+    : aaplFriday * aaplIV * Math.sqrt(daysLeftToExpiry / 365) * 0.35;
+
+  // Premium at gap-down price (same strike ladder, lower spot)
+  const premiumDiscountPct = Math.max(0, -aaplGapPct * 1.5);  // options amplify spot moves
+  const premiumMonday      = avgPremiumFriday * (1 - premiumDiscountPct);
+  const callDiscount       = avgPremiumFriday - premiumMonday;
+
+  // ── 6. Energy Arbitrage Index ──────────────────────────────────────────────
+  // EAI = War Tax generated / Value of AAPL call discount (per share)
+  // EAI > 1.0: oil spike is net-positive for the overlay
+  const callNotionalPerShare = appleTranches.reduce((s, t) => s + t.contracts * 100, 0);
+  const discountValue        = Math.round(callNotionalPerShare * callDiscount);
+  const eai = discountValue > 0 ? +(warTax / discountValue).toFixed(2) : null;
+
+  // ── 7. Net advantage ──────────────────────────────────────────────────────
+  // What you gain: War Tax (harvest from VIX panic)
+  // What you pay:  Any new premium to add Gamma at the dip
+  // Net: warTax - cost of adding new tranche at discounted premium
+  const newContractsAffordable = warTax > 0 && premiumMonday > 0
+    ? Math.floor(warTax / (premiumMonday * 100))
+    : 0;
+  const netAdvantage = Math.round(warTax - newContractsAffordable * premiumMonday * 100);
+
+  // ── 8. Monday regime projection ───────────────────────────────────────────
+  let regimeMonday, regimeRisk;
+  if (vixProjected > 35)                            { regimeMonday = "BLACK SWAN";   regimeRisk = "TERMINATE TRS"; }
+  else if (vixProjected > 27)                       { regimeMonday = "BLACK SWAN";   regimeRisk = "STOP RECYCLING"; }
+  else if (vixProjected > 22 && brentSunday > 115)  { regimeMonday = "RECYCLE";      regimeRisk = "ELEVATED"; }
+  else if (vixProjected > 22)                       { regimeMonday = "SHIELD";       regimeRisk = "CRITICAL"; }
+  else                                               { regimeMonday = "SYMBIOSIS";   regimeRisk = "NORMAL"; }
+
+  // ── 9. Sentinel status ────────────────────────────────────────────────────
+  const sentinelStatus = brentAlert && vixProjected > 24 ? "ALERT"
+    : brentGap > 5 ? "WATCH"
+    : "STANDBY";
+
+  // ── 10. Monday brief ──────────────────────────────────────────────────────
+  const mondayBrief = [];
+
+  if (regimeMonday === "BLACK SWAN") {
+    mondayBrief.push("HALT all TRS seeding at open. Route harvest to VIX shield top-up.");
+    mondayBrief.push("DO NOT open new AAPL calls. Defend existing tranches only.");
+    mondayBrief.push(`VIX expected at ${vixProjected.toFixed(1)} — harvest ${warTax > 0 ? '$' + warTax.toLocaleString() : 'N/A'} available.`);
+  } else if (regimeMonday === "RECYCLE") {
+    mondayBrief.push(`War Tax: $${warTax.toLocaleString()} harvest available from VIX gap-up.`);
+    mondayBrief.push(`AAPL opens ~$${aaplMonday.toFixed(2)} (${(aaplGapPct*100).toFixed(1)}%). Calls ${(premiumDiscountPct*100).toFixed(1)}% cheaper than Friday.`);
+    mondayBrief.push(`Add ${newContractsAffordable} new AAPL contracts at discounted premium ($${premiumMonday.toFixed(2)}/share).`);
+    mondayBrief.push("Deploy 78-bin slicer from 9:30 AM. Phase 1 equity: VST/GEV/CCJ first.");
+    mondayBrief.push(`Energy Arbitrage Index: ${eai}× — oil spike is net-positive for the overlay.`);
+  } else if (regimeMonday === "SHIELD") {
+    mondayBrief.push(`War Tax: $${warTax.toLocaleString()} available. Hold until regime shifts to RECYCLE.`);
+    mondayBrief.push("Accumulate harvest. No new AAPL calls or TRS until VIX confirms direction.");
+    mondayBrief.push(`AAPL at $${aaplMonday.toFixed(2)} — calls available at ${(premiumDiscountPct*100).toFixed(1)}% discount when gate opens.`);
+  } else {
+    mondayBrief.push("Calm open. Run standard Ghost Slicer schedule.");
+    mondayBrief.push("Deploy remaining AAPL tranches at standard 78-bin pace.");
+  }
+
+  // ── Simplified posture API (mirrors lightweight sundayNightSentinel signature) ─
+  const posture = (brentSunday > 120 || vixProjected > 30)
+    ? { label: "🚨 DEFENSIVE LOCK",  vixAction: `Increase Harvest to 25%`,           aaplAction: "Pause new Gamma entry; hold current orchard." }
+    : { label: "🛡️ SHIELD ACTIVE",   vixAction: "Maintain 15% Recycle",              aaplAction: "Resume v2.7 Slicer at Monday Open." };
+
+  return {
+    runTime:              new Date().toISOString(),
+    sentinelStatus,
+    posture,
+    energy: {
+      brentFriday,
+      brentSunday,
+      brentGap:           +brentGap.toFixed(2),
+      brentGapPct:        +(brentGapPct * 100).toFixed(1),
+      brentAlert,
+      energyModel:        brentAlert
+        ? "CLOUD AI MARGIN TAX ACTIVE — $120+ Brent compresses MSFT/GOOG data-center margins"
+        : "BELOW ALERT THRESHOLD — monitor for escalation",
+    },
+    vix: {
+      vixFriday,
+      vixFuturesSunday,
+      vixProjected:       +vixProjected.toFixed(1),
+      vixGapPct:          +(vixGapPct * 100).toFixed(1),
+    },
+    aapl: {
+      aaplFriday,
+      aaplMonday:         +aaplMonday.toFixed(2),
+      aaplGapPct:         +(aaplGapPct * 100).toFixed(1),
+      structuralNote:     "AAPL immune to oil. Gap = risk-off sentiment only. Mean-reverts 3-5 sessions.",
+    },
+    energyArbitrage: {
+      warTax,
+      premiumFriday:      +avgPremiumFriday.toFixed(2),
+      premiumMonday:      +premiumMonday.toFixed(2),
+      premiumDiscountPct: +(premiumDiscountPct * 100).toFixed(1),
+      discountValue,
+      eai,
+      eaiStatus:          eai === null ? "N/A"
+        : eai > 2.0 ? "STRONG ARBITRAGE — oil spike highly net-positive"
+        : eai > 1.0 ? "POSITIVE ARBITRAGE — War Tax > call discount"
+        : "WATCH — discount outpaces current harvest",
+      newContractsAffordable,
+      netAdvantage,
+      arbitrageSummary:   eai && eai > 1.0
+        ? `Oil spike generates $${warTax.toLocaleString()} War Tax vs $${discountValue.toLocaleString()} discount value. Net advantage: $${netAdvantage.toLocaleString()}.`
+        : `War Tax: $${warTax.toLocaleString()}. Build harvest before adding Gamma.`,
+    },
+    regimeMonday,
+    regimeRisk,
+    mondayBrief,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 13. SYSTEMIC ALPHA TRACKER  (LENS tab — Cell P1)
+// ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -1168,6 +1376,10 @@ function buildDashboard(inputs) {
     // Weekend Shield inputs (optional — provide on Friday)
     buildWeekend             = false,
     oilStressScenario        = 135,
+    // Sunday Night Sentinel inputs (optional — provide Sunday evening)
+    brentSunday              = null,
+    brentFriday              = null,
+    vixFuturesSunday         = null,
   } = inputs;
 
   // Layer 1: engine state
@@ -1254,6 +1466,23 @@ function buildDashboard(inputs) {
       })
     : null;
 
+  // Layer 8c: Sunday Night Sentinel (run Sunday evening before Monday open)
+  const sundayNightSentinel = brentSunday !== null && brentFriday !== null
+    ? buildSundayNightSentinel({
+        brentSunday,
+        brentFriday,
+        vixFuturesSunday:  vixFuturesSunday ?? vix,
+        vixFriday:         vix,
+        aaplFriday:        aaplPrice ?? 175,
+        vixPosition,
+        harvestRate,
+        aaplIV,
+        appleTranches:     appleCallOverlay?.tranches ?? [],
+        daysLeftToExpiry:  appleDaysToExpiry,
+        aum,
+      })
+    : null;
+
   // Layer 9: Systemic Alpha (LENS tab P1)
   const systemicAlpha = buildSystemicAlpha({
     cumulative493TrsGain,
@@ -1280,6 +1509,7 @@ function buildDashboard(inputs) {
     appleOptionsBins,
     gammaSqueezeProjection,
     weekendShield,
+    sundayNightSentinel,
     closingCross,
     alerts,
   };
