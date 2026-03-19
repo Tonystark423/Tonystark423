@@ -20,7 +20,11 @@ function updateEngineStatus(aum, vix, oil, gex) {
   }
 
   // 2. The Shield Trigger (VIX & Gamma)
-  if (vix > 25 && gex < 0) {
+  if (vix > 27) {
+    // Black Swan threshold: stop all recycling, maximize shield at full notional
+    status.action = "BLACK SWAN: STOP RECYCLING. MAXIMIZE SHIELD.";
+    status.riskLevel = "BLACK SWAN";
+  } else if (vix > 25 && gex < 0) {
     // Extreme vol + negative gamma: dealers are short gamma, accelerating moves
     status.action = "SHIELD ACTIVE: Do Not Sell VIX. Hold 493 Floor.";
     status.riskLevel = "CRITICAL";
@@ -28,17 +32,17 @@ function updateEngineStatus(aum, vix, oil, gex) {
     // Extreme vol but positive gamma: dealers absorb moves, reduce synthetic exposure
     status.action = "HEDGE: Trim Synthetic Legs. Await Gamma Flip Confirmation.";
     status.riskLevel = "HIGH";
-  } else if (vix > 22 && oil > 115) {
-    // Elevated vol + oil shock: recycle VIX premium into energy-resilient names
-    status.action = "RECYCLE: Harvest VIX Alpha -> Buy Energy-Resilient 493.";
+  } else if (vix > 24 && oil > 115) {
+    // Elevated vol + oil shock: recycle VIX premium into VST/GEV
+    status.action = "RECYCLE: Move VIX Profit -> VST / GEV.";
     status.riskLevel = "ELEVATED";
   } else if (vix > 20) {
     // Early vol expansion: watch for regime change, no action yet
     status.action = "WATCH: Monitor VIX Expansion. Prepare Shield Parameters.";
     status.riskLevel = "WARNING";
   } else {
-    // Calm market: run full alpha capture
-    status.action = "SYMBIOSIS: Maintain Core 493 Alpha Long.";
+    // Calm market: monitor 493 decoupling from Mag 7
+    status.action = "SYMBIOSIS: Monitor 493 Decoupling.";
     status.riskLevel = "NORMAL";
   }
 

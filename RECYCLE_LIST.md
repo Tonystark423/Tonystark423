@@ -33,14 +33,26 @@
 
 ---
 
+## Primary Recycle Targets — VST / GEV
+
+When RECYCLE is triggered (VIX > 24 + Oil > 115), lead deployment with:
+
+| Ticker | Company | Why |
+|--------|---------|-----|
+| VST | Vistra Corp | Power generator — benefits directly from high energy prices |
+| GEV | GE Vernova | Grid infrastructure — energy transition play, oil-shock resilient |
+
+These are the **first two positions** to receive VIX alpha in a RECYCLE phase.
+Deploy the broader Tier 1/2 list after VST/GEV are sized.
+
+---
+
 ## EXEC Tab Integration
 
-Add a second formula in your **[EXEC]** tab to auto-flag the active deployment tier:
-
 ```
-=IF(AND(B1>25, B2<0),   "🛡️ SHIELD — Accumulate Tier 1 (MSFT, V, MA)",
- IF(AND(B1>22, B3>115), "♻️ RECYCLE — Deploy Tier 1+2 (add UNH, JNJ, ABBV)",
- "🌊 SYMBIOSIS — Hold All Positions"))
+=IF(B1>27,              "🚨 BLACK SWAN: STOP RECYCLING, MAXIMIZE SHIELD",
+ IF(AND(B1>24,B3>115),  "♻️ RECYCLE: MOVE VIX PROFIT TO VST/GEV",
+                         "🌊 SYMBIOSIS: MONITOR 493 DECOUPLING"))
 ```
 
 ---
@@ -48,12 +60,16 @@ Add a second formula in your **[EXEC]** tab to auto-flag the active deployment t
 ## Deployment Sequence
 
 ```
-Shield Active (CRITICAL)
-  └─▶ Accumulate Tier 1: MSFT → V → MA → ACN
+BLACK SWAN (VIX > 27)
+  └─▶ Stop all recycling. Maximize VIX shield to full notional.
 
-Shield Holds → Recycle Triggered (ELEVATED)
-  └─▶ Add Tier 2:        UNH → JNJ → ABBV → PG → COST → BRK.B
+Shield / Critical (VIX 25–27, GEX < 0)
+  └─▶ Hold VIX. Accumulate Tier 1: MSFT → V → MA → ACN
+
+Recycle Triggered (VIX > 24, Oil > 115)
+  └─▶ Lead: VST → GEV
+  └─▶ Then Tier 1+2: UNH → JNJ → ABBV → PG → COST → BRK.B
 
 Symbiosis (NORMAL)
-  └─▶ Hold all. No new deployment. Maintain 493 alpha long.
+  └─▶ Hold all. Monitor 493 decoupling from Mag 7.
 ```

@@ -52,9 +52,9 @@
 
 **B4 (Engine Mode)**
 ```
-=IF(AND(B1>25,B2<0),   "🛡️ SHIELD ACTIVE: HOLD VIX / PROTECT 493",
- IF(AND(B1>22,B3>115), "♻️ RECYCLE: HARVEST VIX / BUY ENERGY 493",
-                        "🌊 SYMBIOSIS: LONG 493 ALPHA"))
+=IF(B1>27,              "🚨 BLACK SWAN: STOP RECYCLING, MAXIMIZE SHIELD",
+ IF(AND(B1>24,B3>115),  "♻️ RECYCLE: MOVE VIX PROFIT TO VST/GEV",
+                         "🌊 SYMBIOSIS: MONITOR 493 DECOUPLING"))
 ```
 
 **H4 (Routing Decision)**
@@ -109,9 +109,9 @@
 
 ### Section 4 — Alerts
 
-**O33 (Shield Alert)**
+**O33 (Black Swan Alert)**
 ```
-=IF(AND(B1>25,B2<0), "⚠️ SHIELD PHASE: Do NOT sell VIX. Hold 493 floor.", "")
+=IF(B1>27, "🚨 BLACK SWAN: Stop recycling. Maximize VIX shield immediately.", "")
 ```
 
 **O34 (Termination Alert)**
@@ -119,9 +119,9 @@
 =IF(OR(B1>35,B2<-500000000), "🚨 TERMINATE TRS: VIX>35 or GEX<-$500M. Unwind immediately.", "")
 ```
 
-**O35 (Rebalance Alert)**
+**O35 (Recycle Alert)**
 ```
-=IF(AND(B1>22,B3>115,B1<=25), "🔄 REBALANCE: Rotate into Tier 1 names. Deploy Recycle List.", "")
+=IF(AND(B1>24,B3>115,B1<=27), "♻️ RECYCLE: Deploy VIX profit → VST / GEV first, then Tier 1+2.", "")
 ```
 
 ---
@@ -130,6 +130,7 @@
 
 | Range | Condition | Fill Color |
 |-------|-----------|------------|
+| B4 | contains "BLACK SWAN" | Dark Red `#880000` |
 | B4 | contains "SHIELD" | Red `#FF0000` |
 | B4 | contains "RECYCLE" | Orange `#FF6600` |
 | B4 | contains "SYMBIOSIS" | Green `#00AA44` |
