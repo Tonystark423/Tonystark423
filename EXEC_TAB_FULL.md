@@ -57,9 +57,16 @@
                          "🌊 SYMBIOSIS: MONITOR 493 DECOUPLING"))
 ```
 
+**G6 (ADV Slicer Cap — Ghost vs Guardian, time-aware)**
+```
+=IF(NOW()-INT(NOW())>=TIMEVALUE("15:50:00"), 0.02,
+ IF(B6>=500000000, 0.05, 0.03))
+```
+> Returns 2% during MOC window (3:50–4:00 PM), 3% at $100M, 5% at $1B otherwise.
+
 **H4 (Routing Decision)**
 ```
-=IF((B6/B7)>0.05, "EXECUTE VIA SWAP", "EXECUTE VIA DARK POOL")
+=IF((B6/B7)>G6, "EXECUTE VIA SWAP", "EXECUTE VIA DARK POOL")
 ```
 
 **I4 (Execution Path)**
@@ -79,9 +86,25 @@
 
 **M4 (Net PnL)**
 ```
-=B12-B13-B14*0.0025
+=B12-B13-B14*(B8/10000)*(B9/365)
 ```
-> Net of VIX premium, basket cost, and estimated 25bps TRS financing spread.
+> Net of VIX premium, basket cost, and TRS financing cost (AUM-scaled).
+
+**M10 (Symbiosis PnL Reconciliation)**
+```
+=(VIX_Roll_Yield + E14) - (TRS_Notional*(TRS_Spread_Bps/10000)*(1/365) + G26)
+```
+Where `G26` = today's total slippage across all 493 names.
+
+| M10 result | Meaning | Next action |
+|-----------|---------|-------------|
+| **> 0** | You are the House — Mag 7 Alumni paying for 493 | Hold current ADV cap |
+| **< 0** | Moving too fast — execution cost > VIX revenue | Dial ADV cap to 2% tomorrow |
+
+**N10 (Tomorrow's ADV Cap)**
+```
+=IF(M10>0, G6, 0.02)
+```
 
 **N4 (PnL %)**
 ```
@@ -95,14 +118,17 @@
 
 **H19:H28 (Per-Name Routing)** — paste into H19, drag to H28:
 ```
-=IF((C19/D19)>0.05, "SWAP", "DARK POOL")
+=IF((C19/D19)>$G$6, "SWAP", "DARK POOL")
 ```
 
 **J19:J28 (Per-Name Status)** — paste into J19, drag to J28:
 ```
-=IF(AND($B$1>25,$B$2<0),   "🔒 HOLD — Shield Active",
- IF(AND($B$1>22,$B$3>115), "♻️ DEPLOY — Recycle Phase",
-                             "🌊 STANDBY — Symbiosis"))
+=IF($B$1>35, "🚨 BLACK SWAN — Kill TRS",
+ IF(AND($B$1>27,$B$1<=35), "🚨 EXTREME — Maximize Shield",
+ IF(AND($B$1>22,$B$2<0),   "🔒 SHIELD — Continue Harvest",
+ IF(AND($B$1>24,$B$3>115), "♻️ DEPLOY — Recycle Phase",
+ IF($B$1<20,               "🌊 SYMBIOSIS — Physical Equity",
+                            "⏳ WATCH — Prepare Parameters")))))
 ```
 
 ---

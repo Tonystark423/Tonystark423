@@ -10,9 +10,32 @@
 | VIX allocation | $20M (20% of AUM) | $200M (20% of AUM) |
 | 493 basket | $80M (80% of AUM) | $800M (80% of AUM) |
 | ADV slicer cap | **3%** (ghost) | **5%** (standard) |
+| MOC cap (3:50–4:00 PM) | **2%** (all scales) | **2%** (all scales) |
 | G10 formula | `MIN(notional, ADV×0.03)` | `MIN(notional, ADV×0.05)` |
+| Market impact at cap | **< 5bps** (noise band) | **~6.5bps** (still low) |
+| Block trade impact | 40–60bps (+ HFT tax) | 40–60bps (+ HFT tax) |
+| Alpha saved vs block | ~90% slippage reduction | ~85% slippage reduction |
 | Phase 1 recycle | VST → GEV → CCJ | VST → GEV → CCJ |
 | TRS tenor | 90 days rolling | 90 days rolling |
+
+### Why 3% is the "Magic Number" — Impact Curve Convexity
+
+```
+Market impact ≈ BASE_BPS × √(participation / 0.03)
+
+participation   impact (bps)   what it looks like to the market
+────────────────────────────────────────────────────────────────
+3%  (ghost)         5 bps      ← inside noise band: indistinguishable from
+                                  pension rebalancing / ETF creation-redemption
+5%  (guardian)    6.5 bps      ← detectable but low-signal
+10%               9.1 bps      ← institutional block: front-runnable
+20%+             13 bps exec   ← HFT predation tax kicks in → total 40–60 bps
+                 + ~35 bps HFT
+
+Key insight: 3% is the statistical noise floor.
+You are not invisible — you are indistinguishable.
+That's the edge.
+```
 
 ---
 
@@ -195,10 +218,23 @@
              "🔴 UNDERWATER")))
 ```
 
-**G26 (Slippage Estimate — sum across slicer rows)**
+**M33:M53 (Market Impact bps — sqrt convex model)**
 ```
-=SUMPRODUCT(G33:G53 * IFERROR(VLOOKUP(H33:H53,
-  {"UNWIND NOW",0.0025;"ICEBERG",0.0015;"TWAP",0.0008;"VWAP",0.0005;"DARK POOL",0.0002;"HOLD",0}, 2, 0), 0))
+=IF(H33="UNWIND NOW", 0.0025,
+ IF(H33="HOLD",       0,
+   0.0005 * SQRT(E33 / 0.03)))
+```
+> Impact at 3% ADV = 5bps. Scales as √(participation/0.03).
+> At 3%: 5bps. At 12% (4× cap): 10bps. A visible block at 20%+ ADV: 13bps execution + HFT predation tax → total 40–60bps observed. That's not execution cost — it's predation.
+
+**N33:N53 (Impact Cost — in dollars)**
+```
+=G33 * M33
+```
+
+**G26 (Total Slippage Estimate)**
+```
+=SUM(N33:N53)
 ```
 
 ---
@@ -274,32 +310,235 @@
 
 ---
 
-### Section 5 — Alerts
+### Section 5 — Symbiosis PnL Reconciliation (M10)
 
-**O58 (Black Swan)**
+**M10 (Symbiosis PnL)**
 ```
-=IF(B3>27, "🚨 BLACK SWAN: Stop recycling. Maximize VIX shield immediately.", "")
+=(VIX_Roll_Yield + E14) - (TRS_Financing_Today + Slippage_Today)
 ```
-
-**O59 (Termination)**
+Expanded:
 ```
-=IF(OR(B3>35,B4<-500000000), "🚨 TERMINATE TRS: VIX>35 or GEX<-$500M. Unwind all legs.", "")
-```
-
-**O60 (Recycle)**
-```
-=IF(AND(B3>24,B5>115,B3<=27), "♻️ RECYCLE: Deploy VIX harvest → VST / GEV / CCJ (Phase 1) first.", "")
+=($B$18 + E14) - (TRS_Notional * ($B$8/10000) * (1/365) + G26)
 ```
 
-**O61 (Alpha Efficiency Warning)**
+| Result | Meaning | Action |
+|--------|---------|--------|
+| **> 0** | You are the House — Mag 7 Alumni paying for 493 acquisition | Hold current ADV cap |
+| **< 0** | Moving too fast — execution cost exceeding VIX revenue | Dial ADV cap to 2% tomorrow |
+
+**N10 (Tomorrow's ADV Cap — auto-adjusted)**
 ```
-=IF(AND(ISNUMBER(E25),E25<0), "⚠️ ALPHA UNDERWATER: Review basket vs VIX hedge sizing.", "")
+=IF(M10>0, $G$6, 0.02)
+```
+> Returns 0.02 (2%) if today's reconciliation is negative — engine self-tightens.
+
+**O10 (M10 Verdict)**
+```
+=IF(M10>0, "✅ YOU ARE THE HOUSE: Mag 7 paying for 493.", "⚠️ DIAL BACK: Set ADV cap to 2% tomorrow.")
 ```
 
-**O62 (TRS Drawdown)**
+---
+
+### Section 6 — [EXEC_FINAL] Closing Cross HUD (3:50 PM ET)
+
+This section activates in the final 10 minutes of the session.
+The Closing Cross concentrates Mag 7 selling pressure — HFTs are most predatory here.
+Tighten from standard cap → **2%** for all MOC orders.
+
+**Sheet extension — rows 65–80:**
+
 ```
-=IF(B25/SUMPRODUCT(C33:C53)<-0.02, "🔴 TRS DRAWDOWN >2%: Check termination event thresholds.", "")
+     A                    B              C           D                E            F
+65 [CLOSING CROSS — MOC PROTECTOR]
+66 ──────────────────────────────────────────────────────────────────────────────────
+67 Time (ET)            [live]          MOC CAP      2%               ← P67
+68 Market Status        ← Q67           TIME ADV CAP ← R67           (0 if closed)
+69
+70 TICKER  UNFILLED($)  ADV(live)  MOC_LIMIT(2%)  EXECUTE_TODAY  DEFER_TOMORROW  STATUS
+71 VST     [B71]        [C71]      ←D71           ←E71           ←F71            ←G71
+72 GEV     [B72]        ...
+73 CCJ     [B73]        ...
+74 MSFT    [B74]        ...
+75  ...    (all active positions with unfilled notional)
+76
+77 ──────────────────────────────────────────────────────────────────────────────────
+78 TOTAL EXECUTE TODAY  ← SUMPRODUCT(E71:E75)
+79 TOTAL DEFER TOMORROW ← SUMPRODUCT(F71:F75)
+80 MOC SUMMARY          ← S80
 ```
+
+**P67 (MOC Cap — hardcoded 2%)**
+```
+=0.02
+```
+
+**Q67 (Market Status)**
+```
+=IF(NOW()-INT(NOW()) < TIMEVALUE("09:30:00"), "PRE-MARKET",
+ IF(NOW()-INT(NOW()) < TIMEVALUE("15:50:00"), "REGULAR SESSION",
+ IF(NOW()-INT(NOW()) < TIMEVALUE("16:00:00"), "🔔 MOC WINDOW — CLOSING CROSS",
+                                               "MARKET CLOSED")))
+```
+> Note: adjust timezone conversion to match your sheet's locale.
+
+**R67 (Time-Aware ADV Cap)**
+```
+=IF(NOW()-INT(NOW()) >= TIMEVALUE("15:50:00"), P67, $G$6)
+```
+> Automatically switches to 2% at 3:50 PM, returns to standard cap otherwise.
+
+**D71:D75 (MOC Limit per name — 2% of ADV)**
+```
+=C71 * $P$67
+```
+
+**E71:E75 (Execute Today)**
+```
+=MIN(B71, D71)
+```
+
+**F71:F75 (Defer to Tomorrow)**
+```
+=MAX(0, B71 - D71)
+```
+
+**G71:G75 (Status)**
+```
+=IF(F71>0,
+  "⚠️ DEFER $" & TEXT(F71,"#,##0") & " → Tomorrow VWAP",
+  "🚀 EXECUTE MOC")
+```
+
+**S80 (MOC Summary)**
+```
+=IF(SUM(F71:F75)>0,
+  "⚠️ " & COUNTIF(G71:G75,"⚠️*") & " name(s) deferred. $" & TEXT(SUM(F71:F75)/1000000,"0.000") & "M rolls to tomorrow VWAP.",
+  "🚀 Full MOC execution within stealth parameters.")
+```
+
+---
+
+### Section 5 — Master Alert Formula (B4 / single-cell HUD)
+
+**B_ALERT (Master Regime Formula — paste anywhere for instant read)**
+```
+=IF(OR(VIX>35,Oil>140),          "🚨 BLACK SWAN",
+ IF(AND(VIX>=22,VIX<=35,GEX<0), "🛡️ SHIELD ACTIVE",
+ IF(VIX<20,                      "🌊 SYMBIOSIS",
+                                  "⚖️ TRANSITION")))
+```
+
+Named-range version (cell reference version for paste-anywhere):
+```
+=IF(OR(B3>35,B5>140),              "🚨 BLACK SWAN",
+ IF(AND(B3>=22,B3<=35,B4<0),      "🛡️ SHIELD ACTIVE",
+ IF(B3<20,                         "🌊 SYMBIOSIS",
+                                    "⚖️ TRANSITION")))
+```
+
+| Regime | Condition | Action |
+|--------|-----------|--------|
+| 🚨 BLACK SWAN | VIX > 35 OR Oil > $140 | Kill TRS. 100% PnL → Cash/VIX Shield |
+| 🛡️ SHIELD ACTIVE | VIX 22–35 AND GEX < 0 | 15% harvest. 3% ADV cap. No new TRS |
+| 🌊 SYMBIOSIS | VIX < 20 | Exit VIX shield. 100% Physical 493 |
+| ⚖️ TRANSITION | everything else | Watch. Prepare parameters |
+
+---
+
+### Section 6 — Per-Alert Cells
+
+**O58 (GEX Collapse / Terminate TRS)**
+```
+=IF(B4<-500000000, "🚨 TERMINATE TRS: GEX < -$500M. UNWIND ALL LEGS IMMEDIATELY.", "")
+```
+
+**O59 (Black Swan)**
+```
+=IF(OR(B3>35,B5>140), "🚨 BLACK SWAN: Kill TRS seeding. 100% PnL → Cash/VIX Shield.", "")
+```
+
+**O60 (Shield Active)**
+```
+=IF(AND(B3>=22,B3<=35,B4<0), "🛡️ SHIELD: Continue 15% harvest. 3% ADV cap. No new TRS.", "")
+```
+
+**O61 (Recycle)**
+```
+=IF(AND(B3>24,B5>115,B3<=35), "♻️ RECYCLE: Deploy VIX harvest → VST / GEV / CCJ → Tier 1+2.", "")
+```
+
+**O62 (Symbiosis)**
+```
+=IF(B3<20, "🌊 SYMBIOSIS: Exit VIX shield. Rotate to 100% Physical Equity 493.", "")
+```
+
+**O63 (Alpha Warning)**
+```
+=IF(AND(ISNUMBER(E25),E25<0), "⚠️ ALPHA UNDERWATER: Check M10. Tighten ADV cap to 2%.", "")
+```
+
+**O64 (TRS Drawdown)**
+```
+=IF(B25/SUMPRODUCT(C33:C53)<-0.02, "🔴 TRS DRAWDOWN >2%: Monitor termination thresholds.", "")
+```
+
+---
+
+### Section 7 — [LENS] Tab: Systemic Alpha (Cell P1)
+
+Add a second tab named **[LENS]** to track cumulative "Free Growth" extracted from Mag 7 volatility.
+
+**P1 (Total Systemic Alpha)**
+```
+=(Cumulative_493_TRS_Gain + Cumulative_VIX_Roll_Yield) - Total_Financing_Costs
+```
+Cell reference version:
+```
+=(P3 + P4) - P5
+```
+
+| P1 vs AUM | Status | Action |
+|-----------|--------|--------|
+| **> 5% of AUM** | DECOUPLED | 493 is self-funding. Mag 7 paying for the grid. |
+| **2–5% of AUM** | COMPOUNDING | On track. Hold current parameters. |
+| **< 2% of AUM** | ENERGY TAX WINNING | Tighten Shield Trigger to VIX > 27. Reduce TRS notional. |
+
+**P6 (Systemic Alpha % of AUM)**
+```
+=P1 / AUM
+```
+
+**P7 (Status)**
+```
+=IF(P6>0.05, "✅ DECOUPLED — 493 self-funding",
+ IF(P6>0.02, "📈 COMPOUNDING — hold parameters",
+             "⚠️ ENERGY TAX WINNING — tighten Shield to VIX>27"))
+```
+
+**[LENS] Tab Layout:**
+```
+     A                         B
+1  Total Systemic Alpha        ← P1  =(P3+P4)-P5
+2  ─────────────────────────────────────────────
+3  Cumul. 493 TRS Gain         [cumulative live]
+4  Cumul. VIX Roll Yield       [cumulative live]
+5  Total Financing Costs       [cumulative live]
+6  Systemic Alpha % AUM        ← P6
+7  Status                      ← P7
+8
+9  Decoupled Threshold (5%)    =AUM*0.05
+10 Warning Threshold  (2%)     =AUM*0.02
+11
+12 Daily P1 contribution       =(Today_493_gain + Today_VIX_roll) - Today_financing
+```
+
+**Conditional Formatting — P7:**
+
+| Condition | Fill Color |
+|-----------|------------|
+| contains "DECOUPLED" | Green `#00AA44` |
+| contains "COMPOUNDING" | Light Green `#88CC44` |
+| contains "ENERGY TAX" | Red `#FF0000` |
 
 ---
 

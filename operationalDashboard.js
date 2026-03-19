@@ -1,20 +1,37 @@
 /**
- * OPERATIONAL DASHBOARD ENGINE v1.0
- * $1B Live Alpha vs Risk — Unified Shield / Recycle / Execution / TRS
+ * OPERATIONAL DASHBOARD ENGINE v2.1
+ * $1B / $100M Live Alpha vs Risk — Unified Shield / Recycle / Execution / TRS
  *
  * Entry point: buildDashboard(inputs)
- * Returns:     { engineState, executionPlan, trsTracker, alphaRisk, alerts }
+ * Returns: { scale, advCap, engineState, harvestPlan, executionPlan,
+ *            trsTracker, alphaRisk, symbiosisPnl, closingCross, alerts }
+ *
+ * Key invisibility thresholds:
+ *   Regular session:  3% ADV at $100M (Ghost) | 5% ADV at $1B (Guardian)
+ *   MOC window:       2% ADV at all scales (3:50–4:00 PM ET)
+ *
+ * Slippage math — why 3% is the "magic number":
+ *   Visible trade  ($3.36M into VST in 1 hr): 40–60bps market impact = ~$20k alpha evaporated
+ *   Ghost trade    (3% ADV clips, $840k/name): < 5bps market impact
+ *   Institutional noise floor: looks like pension rebalancing energy weightings
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// At $1B: slicer cap is 5% of ADV (Guardian invisibility threshold)
-// At $100M: slicer cap drops to 3% of ADV ("Ghost" mode — even stealthier)
+// Regular-session ADV caps — stay inside institutional noise floor
 const ADV_CAP_BY_SCALE = {
-  "1B":   0.05,
-  "100M": 0.03,
+  "1B":   0.05,   // Guardian: 5% of ADV → < 5bps market impact
+  "100M": 0.03,   // Ghost:    3% of ADV → < 5bps market impact, looks like pension rebalancing
+};
+const ADV_CAP_MOC = 0.02;   // Tighten to 2% during Closing Cross (3:50–4:00 PM ET)
+
+// ET market session boundaries (minutes since midnight)
+const SESSION = {
+  OPEN:  9  * 60 + 30,   // 9:30 AM
+  MOC:   15 * 60 + 50,   // 3:50 PM — MOC window opens
+  CLOSE: 16 * 60 +  0,   // 4:00 PM
 };
 
 function getScale(aum) {
@@ -23,6 +40,22 @@ function getScale(aum) {
 
 function getAdvCap(aum) {
   return ADV_CAP_BY_SCALE[getScale(aum)];
+}
+
+/**
+ * Time-aware ADV cap (ET).
+ * Regular session : standard cap (3% Ghost / 5% Guardian)
+ * MOC window      : tighten to 2% — Closing Cross magnifies footprint
+ * Closed          : 0 (no execution)
+ *
+ * nowET: JS Date object already in ET (or pass null to skip time check)
+ */
+function getTimeAwareAdvCap(aum, nowET) {
+  if (!nowET) return getAdvCap(aum);
+  const tod = nowET.getHours() * 60 + nowET.getMinutes();
+  if (tod < SESSION.OPEN || tod >= SESSION.CLOSE) return 0;
+  if (tod >= SESSION.MOC)                         return ADV_CAP_MOC;
+  return getAdvCap(aum);
 }
 
 const RECYCLE_BASKET = [
@@ -80,15 +113,74 @@ function buildHarvestPlan(vixPosition, vixDailyReturnPct, harvestRate = 0.15, ma
   };
 }
 
-// Slippage estimate in bps by execution algo
-const SLIPPAGE_BPS = {
-  "UNWIND NOW":         25,
-  "HOLD":                0,
-  "ICEBERG":            15,
-  "TWAP":                8,
-  "VWAP":                5,
-  "DARK POOL":           2,
-  "VWAP REBALANCE":      3,
+// ─────────────────────────────────────────────────────────────────────────────
+// IMPACT CURVE MODEL — sqrt convexity (why 3% is the "magic number")
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Market impact is NOT linear in participation rate — it follows a sqrt curve.
+ * This is the core reason 3% ADV is the noise-band threshold, not just a rule.
+ *
+ * Simplified Almgren-Chriss temporary impact:
+ *   impact_bps = BASE_IMPACT_BPS × sqrt(advRatio / NOISE_BAND_THRESHOLD)
+ *
+ * Calibrated so that:
+ *   advRatio = 0.03 (3%) → BASE_IMPACT_BPS (5 bps)  ← inside noise band
+ *   advRatio = 0.056 (visible block) → ~6.8 bps execution impact
+ *   + HFT predation tax when > noise band: total observable ≈ 40–60 bps
+ *
+ * At ≤ 3% ADV, your order is a statistical fluctuation:
+ *   indistinguishable from passive ETF rebalancing / pension flows.
+ *   There is no detectable signal → no HFT predation tax.
+ *
+ * At > 3% ADV, HFTs can detect the pattern → front-run → adverse selection.
+ *   That's where 40–60 bps comes from. It's not execution cost — it's predation.
+ */
+const NOISE_BAND_THRESHOLD = 0.03;   // 3% — the "indistinguishable" floor
+const BASE_IMPACT_BPS      = 5;      // impact at exactly the noise band
+
+/**
+ * Returns estimated execution impact in bps for a given participation rate.
+ * For block trades (isBlock=true), adds the HFT predation tax on top.
+ */
+function getMarketImpactBps(advRatio, isBlock = false) {
+  if (advRatio <= 0) return 0;
+  const executionImpact = BASE_IMPACT_BPS * Math.sqrt(advRatio / NOISE_BAND_THRESHOLD);
+  const hftPredationTax = isBlock && advRatio > NOISE_BAND_THRESHOLD
+    ? executionImpact * (advRatio / NOISE_BAND_THRESHOLD - 1) * 6   // nonlinear predation
+    : 0;
+  return +(executionImpact + hftPredationTax).toFixed(1);
+}
+
+/**
+ * Impact comparison: block trade vs ghost trade.
+ * Makes the convexity visible for reporting.
+ */
+function impactComparison(notional, adv) {
+  const blockRatio = adv > 0 ? notional / adv : 0;
+  const ghostRatio = NOISE_BAND_THRESHOLD;
+  const blockImpactBps = getMarketImpactBps(blockRatio, true);
+  const ghostImpactBps = getMarketImpactBps(ghostRatio, false);
+  const blockCost = Math.round(notional * (blockImpactBps / 10_000));
+  const ghostCost = Math.round(notional * (ghostImpactBps / 10_000));
+  return {
+    blockRatioPct:   +(blockRatio * 100).toFixed(1),
+    blockImpactBps,
+    blockCost,
+    ghostRatioPct:   +(ghostRatio * 100).toFixed(1),
+    ghostImpactBps,
+    ghostCost,
+    alphaSaved:      Math.round(blockCost - ghostCost),
+    reductionPct:    blockCost > 0
+      ? +((1 - ghostCost / blockCost) * 100).toFixed(0)
+      : 0,
+  };
+}
+
+// Flat fallback for algo regimes where advRatio isn't meaningful (HOLD, UNWIND)
+const SLIPPAGE_BPS_OVERRIDE = {
+  "UNWIND NOW":  25,   // accept slippage — speed > cost
+  "HOLD":         0,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -209,8 +301,15 @@ function getExecutionPlanForName(name, adv, engineState, aum) {
     "VWAP REBALANCE":   "LOW — Rebalance Only",
   }[algo] ?? "";
 
-  const slippageBps  = SLIPPAGE_BPS[algo] ?? 0;
-  const slippageCost = allowedNotional * (slippageBps / 10_000);
+  // Impact model: sqrt convexity for normal algos, flat override for UNWIND/HOLD
+  const effectiveRatio = allowedNotional > 0 && adv > 0 ? allowedNotional / adv : 0;
+  const slippageBps  = SLIPPAGE_BPS_OVERRIDE[algo] !== undefined
+    ? SLIPPAGE_BPS_OVERRIDE[algo]
+    : getMarketImpactBps(effectiveRatio);
+  const slippageCost = Math.round(allowedNotional * (slippageBps / 10_000));
+
+  // Impact comparison — shows how much alpha the ghost approach saves vs a block trade
+  const impact = impactComparison(notional, adv);
 
   // Phase 1 names activate first; Phase 2 only after Phase 1 is sized
   const deployPriority = phase === 1 ? "DEPLOY FIRST" : "DEPLOY AFTER PHASE 1";
@@ -220,17 +319,18 @@ function getExecutionPlanForName(name, adv, engineState, aum) {
     phase,
     deployPriority,
     notional,
-    allowedNotional: Math.round(allowedNotional),  // ghost slicer cap
+    allowedNotional: Math.round(allowedNotional),
     adv,
-    advRatioPct:   +(advRatio * 100).toFixed(2),
-    advCapPct:     +(advCap   * 100).toFixed(0),
+    advRatioPct:     +(advRatio     * 100).toFixed(2),
+    advCapPct:       +(advCap       * 100).toFixed(0),
     algo,
-    sliceSize:     Math.round(sliceSize),
+    sliceSize:       Math.round(sliceSize),
     timeWindowMin,
     route,
     urgency,
     slippageBps,
-    slippageCost:  Math.round(slippageCost),
+    slippageCost,
+    impact,   // { blockImpactBps, ghostImpactBps, alphaSaved, reductionPct }
   };
 }
 
@@ -358,48 +458,243 @@ function buildAlphaRiskPanel(alphaInputs) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. ALERTS
+// 6. SYMBIOSIS PnL RECONCILIATION  (Cell M10)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildAlerts(vix, gex, engineState, alphaRisk, trsTracker) {
+/**
+ * M10 = (VIX_Roll_Yield + VIX_Price_Gain) - (TRS_Financing + 493_Slippage)
+ *
+ * Result > 0: You are the House. Mag 7 volatility is paying for 493 acquisition.
+ * Result < 0: Moving too fast. Dial ADV cap to 2% for tomorrow's open.
+ *
+ * vixRollYield  : positive carry from holding VIX long (daily theta credit from put spreads)
+ * vixPriceGain  : mark-to-market gain on VIX position today
+ * trsFinancing  : SOFR + spread accrued on open TRS legs today
+ * slippage493   : actual execution slippage paid today across all 493 names
+ */
+function buildSymbiosisPnl({ vixRollYield, vixPriceGain, trsFinancing, slippage493 }) {
+  const grossAlpha = vixRollYield + vixPriceGain;
+  const grossCost  = trsFinancing + slippage493;
+  const netPnl     = grossAlpha - grossCost;
+  const positive   = netPnl > 0;
+
+  return {
+    grossAlpha:   Math.round(grossAlpha),
+    grossCost:    Math.round(grossCost),
+    netPnl:       Math.round(netPnl),
+    tomorrowCap:  positive ? 0.03 : 0.02,     // 2% tomorrow if negative — dial back stealth
+    verdict: positive
+      ? "YOU ARE THE HOUSE: Mag 7 volatility is paying for 493 acquisition."
+      : "MOVING TOO FAST: Dial ADV cap to 2% for tomorrow's open.",
+    action: positive ? "HOLD CURRENT CAP" : "REDUCE CAP TO 2% AT OPEN",
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. MOC PROTECTOR — CLOSING CROSS (3:50 PM ET)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * ECOSYSTEM GUARDIAN: MOC PROTECTOR v2.1
+ * Ensures 3:50 PM orders don't break the stealth cap.
+ *
+ * At MOC the Closing Cross concentrates Mag 7 selling into the final print.
+ * Tighten from 3% → 2% ADV to stay inside institutional noise.
+ * Anything over the limit defers to tomorrow's VWAP open.
+ *
+ * notionalRemaining : dollar value of unfilled order going into MOC
+ * currentVolume     : ADV for that name (dollar)
+ */
+function protectClosingCross(notionalRemaining, currentVolume) {
+  const closingLimit = currentVolume * ADV_CAP_MOC;   // 2% cap
+
+  if (notionalRemaining > closingLimit) {
+    const excess = notionalRemaining - closingLimit;
+    return {
+      action:          "DEFER",
+      message:         `⚠️ LIMIT EXCEEDED: Move $${(excess / 1_000_000).toFixed(3)}M to Tomorrow's VWAP.`,
+      executeToday:    Math.round(closingLimit),
+      deferToTomorrow: Math.round(excess),
+      capUsed:         ADV_CAP_MOC,
+    };
+  }
+
+  return {
+    action:          "EXECUTE",
+    message:         "🚀 EXECUTE MOC: Within stealth parameters.",
+    executeToday:    Math.round(notionalRemaining),
+    deferToTomorrow: 0,
+    capUsed:         ADV_CAP_MOC,
+  };
+}
+
+/**
+ * Runs protectClosingCross across every name in the execution plan
+ * that still has unfilled notional at 3:50 PM.
+ *
+ * unfilledByTicker: { VST: 420000, GEV: 310000, ... }
+ * advByTicker:      { VST: 60000000, ... }
+ */
+function buildClosingCross(unfilledByTicker, advByTicker) {
+  const results = {};
+  let totalExecuteToday    = 0;
+  let totalDeferToTomorrow = 0;
+
+  for (const [ticker, unfilled] of Object.entries(unfilledByTicker)) {
+    const adv    = advByTicker[ticker] ?? 0;
+    const result = protectClosingCross(unfilled, adv);
+    results[ticker]       = result;
+    totalExecuteToday    += result.executeToday;
+    totalDeferToTomorrow += result.deferToTomorrow;
+  }
+
+  return {
+    perName:          results,
+    totalExecuteToday:    Math.round(totalExecuteToday),
+    totalDeferToTomorrow: Math.round(totalDeferToTomorrow),
+    summary: totalDeferToTomorrow > 0
+      ? `⚠️ ${Object.values(results).filter(r => r.action === "DEFER").length} name(s) deferred. $${(totalDeferToTomorrow / 1_000_000).toFixed(3)}M rolls to tomorrow's VWAP.`
+      : "🚀 Full MOC execution within stealth parameters.",
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. SYSTEMIC ALPHA TRACKER  (LENS tab — Cell P1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * P1 = (Cumulative_493_TRS_Gain + Cumulative_VIX_Roll_Yield) - Total_Financing_Costs
+ *
+ * Measures how much "Free Growth" has been extracted from Mag 7 volatility.
+ * When this exceeds 5% of AUM, the 493 basket is self-funding — you have decoupled.
+ *
+ * systemicInputs: {
+ *   cumulative493TrsGain  : total mark-to-market gain on all 493 TRS legs to date
+ *   cumulativeVixRollYield: cumulative daily roll/theta credits from VIX long
+ *   totalFinancingCosts   : cumulative SOFR+spread paid on all TRS legs to date
+ *   aum                   : current AUM
+ * }
+ */
+function buildSystemicAlpha({ cumulative493TrsGain, cumulativeVixRollYield, totalFinancingCosts, aum }) {
+  const grossAlpha    = cumulative493TrsGain + cumulativeVixRollYield;
+  const systemicAlpha = grossAlpha - totalFinancingCosts;
+  const systemicPct   = aum > 0 ? (systemicAlpha / aum) * 100 : 0;
+
+  let status, action;
+  if (systemicPct > 5) {
+    status = "DECOUPLED";
+    action = "493 is self-funding. Mag 7 volatility has paid for the grid.";
+  } else if (systemicPct > 2) {
+    status = "COMPOUNDING";
+    action = "On track. Maintain current ADV cap and harvest rate.";
+  } else {
+    status = "ENERGY TAX WINNING";
+    action = "Tighten Shield Trigger to VIX > 27. Reduce TRS notional.";
+  }
+
+  return {
+    grossAlpha:      Math.round(grossAlpha),
+    systemicAlpha:   Math.round(systemicAlpha),
+    systemicPct:     +systemicPct.toFixed(2),
+    status,
+    action,
+    decoupledThreshold: +(aum * 0.05).toFixed(0),   // 5% of AUM
+    warningThreshold:   +(aum * 0.02).toFixed(0),   // 2% of AUM
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Three-level alert hierarchy — formula equivalent:
+ *
+ *   =IF(OR(VIX>35, Oil>140),          "🚨 BLACK SWAN",
+ *    IF(AND(VIX>=22, VIX<=35, GEX<0), "🛡️ SHIELD ACTIVE",
+ *    IF(VIX<20,                        "🌊 SYMBIOSIS",
+ *                                      "⚖️ TRANSITION")))
+ *
+ * 🚨 BLACK SWAN  (VIX > 35 OR Oil > $140)
+ *    Kill all TRS seeding. 100% PnL → Cash / VIX Shield. Protect principal.
+ *
+ * 🛡️ SHIELD ACTIVE  (VIX 22–35 AND GEX < 0)
+ *    Continue 15% harvest. Maintain 3% ADV stealth cap. No new TRS legs.
+ *
+ * 🌊 SYMBIOSIS  (VIX < 20)
+ *    Exit VIX shield. 100% Long 493 via Physical Equity (no TRS needed).
+ *
+ * ⚖️ TRANSITION  (everything else)
+ *    Monitor. Prepare Shield or Recycle parameters.
+ */
+function buildAlerts(vix, oil, gex, engineState, alphaRisk, trsTracker) {
   const alerts = [];
 
-  if (vix > 27) {
+  // ── Tier 0: GEX structural collapse (independent of VIX level) ───────────
+  if (gex < -500_000_000) {
     alerts.push({
-      level: "BLACK SWAN",
-      message: "VIX > 27. STOP ALL RECYCLING. MAXIMIZE VIX SHIELD TO FULL NOTIONAL IMMEDIATELY.",
+      level:   "TERMINATE TRS",
+      message: "GEX < -$500M — structural gamma collapse. UNWIND ALL TRS LEGS IMMEDIATELY.",
+      action:  "Unwind all TRS. Return to VIX Shield only. No new deployment until GEX > 0.",
     });
   }
 
-  if (vix > 35 || gex < -500_000_000) {
+  // ── Tier 1: BLACK SWAN (VIX > 35 OR Oil > $140) ──────────────────────────
+  if (vix > 35 || oil > 140) {
+    const trigger = [vix > 35 && `VIX ${vix.toFixed(1)} > 35`, oil > 140 && `Oil $${oil.toFixed(0)} > $140`]
+      .filter(Boolean).join(" + ");
     alerts.push({
-      level: "TERMINATE TRS",
-      message: `TERMINATE TRS: ${vix > 35 ? "VIX > 35" : "GEX < -$500M"}. UNWIND ALL LEGS. RETURN TO SHIELD.`,
+      level:   "BLACK SWAN",
+      message: `${trigger}. BLACK SWAN CONFIRMED.`,
+      action:  "KILL all TRS seeding. Move 100% of harvested PnL to Cash / VIX Shield. Protect principal.",
     });
   }
 
+  // ── Tier 2: SHIELD ACTIVE (VIX 22–35 AND GEX < 0) ───────────────────────
+  if (vix >= 22 && vix <= 35 && gex < 0) {
+    alerts.push({
+      level:   "SHIELD ACTIVE",
+      message: `VIX ${vix.toFixed(1)} in 22–35 range + GEX negative.`,
+      action:  "Continue 15% VIX harvest. Maintain 3% ADV stealth cap. Do NOT open new TRS legs.",
+    });
+  }
+
+  // ── Tier 3: RECYCLE (engine ELEVATED) ────────────────────────────────────
   if (engineState.riskLevel === "ELEVATED") {
     alerts.push({
-      level: "RECYCLE",
-      message: "RECYCLE TRIGGERED. DEPLOY VIX PROFIT → VST / GEV FIRST (Phase 1), THEN TIER 1+2.",
+      level:   "RECYCLE",
+      message: `VIX > 24 + Oil > $115. RECYCLE phase triggered.`,
+      action:  "Deploy VIX harvest → VST / GEV / CCJ (Phase 1), then Tier 1+2. Ghost Slicer at 3% ADV.",
     });
   }
 
+  // ── Tier 4: SYMBIOSIS (VIX < 20) ─────────────────────────────────────────
+  if (vix < 20) {
+    alerts.push({
+      level:   "SYMBIOSIS",
+      message: `VIX ${vix.toFixed(1)} < 20. Calm market.`,
+      action:  "Exit VIX shield. Rotate to 100% Long 493 via Physical Equity. No TRS needed.",
+    });
+  }
+
+  // ── Supporting: alpha and TRS health ────────────────────────────────────
   if (alphaRisk.status === "UNDERWATER") {
     alerts.push({
-      level: "ALPHA WARNING",
-      message: `Alpha efficiency ${alphaRisk.alphaEfficiency}x. Net alpha negative. Review basket vs VIX hedge sizing.`,
+      level:   "ALPHA WARNING",
+      message: `Alpha efficiency ${alphaRisk.alphaEfficiency}x — net alpha negative.`,
+      action:  "Check M10 reconciliation. Tighten ADV cap to 2% until M10 turns positive.",
     });
   }
 
   if (trsTracker.totals.netPnlPct < -2) {
     alerts.push({
-      level: "TRS DRAWDOWN",
-      message: `TRS book down ${Math.abs(trsTracker.totals.netPnlPct)}% net of financing. Check termination events.`,
+      level:   "TRS DRAWDOWN",
+      message: `TRS book down ${Math.abs(trsTracker.totals.netPnlPct)}% net of financing.`,
+      action:  "Monitor termination thresholds: VIX > 35 or GEX < -$500M triggers unwind.",
     });
   }
 
-  return alerts.length > 0 ? alerts : [{ level: "OK", message: "No active alerts. System nominal." }];
+  return alerts.length > 0 ? alerts : [{ level: "OK", message: "No active alerts. System nominal.", action: "" }];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -416,11 +711,20 @@ function buildAlerts(vix, gex, engineState, alphaRisk, trsTracker) {
  *   basketCost:         600_000_000,
  *   basketValue:        638_000_000,
  *   holdingDays:        14,
- *   // harvest inputs (optional — used for $100M Volatility Tax math)
+ *   // harvest inputs
  *   vixPosition:        20_000_000,   // dollar size of VIX long
  *   vixDailyReturnPct:  16.8,         // today's VIX % move
  *   harvestRate:        0.15,         // 15% of daily VIX PnL → margin
  *   marginRate:         0.15,         // 15% margin → 6.67x TRS multiplier
+ *   // M10 reconciliation inputs
+ *   vixRollYield:       210_000,      // daily theta/roll credit from VIX position
+ *   // Closing Cross inputs (optional — provide at 3:50 PM)
+ *   nowET:              null,         // JS Date in ET — enables time-aware cap
+ *   unfilledByTicker:   {},           // { VST: 420000, GEV: 310000, ... }
+ *   // Systemic Alpha inputs (cumulative — LENS tab P1)
+ *   cumulative493TrsGain:    0,
+ *   cumulativeVixRollYield:  0,
+ *   totalFinancingCosts:     0,
  * }
  */
 function buildDashboard(inputs) {
@@ -433,10 +737,16 @@ function buildDashboard(inputs) {
     basketCost,
     basketValue,
     holdingDays,
-    vixPosition       = 0,
-    vixDailyReturnPct = 0,
-    harvestRate       = 0.15,
-    marginRate        = 0.15,
+    vixPosition              = 0,
+    vixDailyReturnPct        = 0,
+    harvestRate              = 0.15,
+    marginRate               = 0.15,
+    vixRollYield             = 0,
+    nowET                    = null,
+    unfilledByTicker         = {},
+    cumulative493TrsGain     = 0,
+    cumulativeVixRollYield   = 0,
+    totalFinancingCosts      = 0,
   } = inputs;
 
   // Layer 1: engine state
@@ -465,17 +775,43 @@ function buildDashboard(inputs) {
     holdingDays,
   });
 
-  // Layer 6: alerts
-  const alerts = buildAlerts(vix, gex, engineState, alphaRisk, trsTracker);
+  // Layer 6: Symbiosis PnL reconciliation (M10)
+  const symbiosisPnl = buildSymbiosisPnl({
+    vixRollYield,
+    vixPriceGain: harvestPlan.dailyVixPnl,
+    trsFinancing: trsTracker.totals.financingCost,
+    slippage493:  totalSlippage,
+  });
+
+  // Layer 7: Closing Cross / MOC protector (3:50 PM ET tightening)
+  const timeAwareAdvCap = getTimeAwareAdvCap(aum, nowET);
+  const closingCross    = Object.keys(unfilledByTicker).length > 0
+    ? buildClosingCross(unfilledByTicker, advByTicker)
+    : null;
+
+  // Layer 8: Systemic Alpha (LENS tab P1)
+  const systemicAlpha = buildSystemicAlpha({
+    cumulative493TrsGain,
+    cumulativeVixRollYield,
+    totalFinancingCosts,
+    aum,
+  });
+
+  // Layer 9: alerts
+  const alerts = buildAlerts(vix, oil, gex, engineState, alphaRisk, trsTracker);
 
   return {
-    scale: getScale(aum),         // "100M" or "1B"
-    advCap: getAdvCap(aum),       // 0.03 or 0.05 (ghost slicer threshold)
+    scale:           getScale(aum),       // "100M" or "1B"
+    advCap:          getAdvCap(aum),      // 0.03 or 0.05 (standard session)
+    timeAwareAdvCap,                      // may be 0.02 (MOC) or 0 (closed)
     engineState,
     harvestPlan,
     executionPlan,
     trsTracker,
     alphaRisk,
+    symbiosisPnl,
+    systemicAlpha,
+    closingCross,
     alerts,
   };
 }
