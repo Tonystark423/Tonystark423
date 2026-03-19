@@ -1,10 +1,11 @@
 /**
- * OPERATIONAL DASHBOARD ENGINE v2.1
+ * OPERATIONAL DASHBOARD ENGINE v2.2
  * $1B / $100M Live Alpha vs Risk — Unified Shield / Recycle / Execution / TRS
  *
  * Entry point: buildDashboard(inputs)
  * Returns: { scale, advCap, engineState, harvestPlan, executionPlan,
- *            trsTracker, alphaRisk, symbiosisPnl, closingCross, alerts }
+ *            trsTracker, alphaRisk, symbiosisPnl, appleCallOverlay,
+ *            appleOptionsBins, gammaSqueezeProjection, closingCross, alerts }
  *
  * Key invisibility thresholds:
  *   Regular session:  3% ADV at $100M (Ghost) | 5% ADV at $1B (Guardian)
@@ -559,7 +560,310 @@ function buildClosingCross(unfilledByTicker, advByTicker) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8. SYSTEMIC ALPHA TRACKER  (LENS tab — Cell P1)
+// 8. APPLE CALL OVERLAY  (VIX Harvest → AAPL Calls)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * APPLE CALL OVERLAY — funded entirely by the daily Volatility Tax harvest.
+ *
+ * Thesis:
+ *   Apple runs "Edge AI" on the user's battery — no data center, no GPU capex, no
+ *   energy bill. While Google/MSFT absorb the $119 oil spike through 5GW data centers,
+ *   Apple's margins are structurally immune. The hardware AI cycle (A18/M4) does the
+ *   compute work at zero marginal energy cost per inference.
+ *
+ *   Funding mechanism:
+ *   VIX harvest ($504k/day at $100M AUM) covers the call premium.
+ *   The Alumni are paying for your levered AAPL recovery bet.
+ *
+ * Strike ladder (3 tranches):
+ *   Tranche A (40%): ATM       — delta ~0.50, core recovery bet
+ *   Tranche B (40%): +5% OTM  — delta ~0.30, leveraged AI-cycle upside
+ *   Tranche C (20%): +10% OTM — delta ~0.18, lottery on full AI repricing
+ *
+ * Premium approximation (simplified log-normal, T in calendar days):
+ *   call_premium ≈ S × IV × √(T/365) × N(d1_approx)
+ *   where N(d1_approx) ≈ 0.40 for ATM, 0.28 for +5%, 0.18 for +10%
+ *
+ * Execution:
+ *   - Spread across 3 days (1 tranche/day) — no single-day concentration
+ *   - Execute in first 30 minutes (bid-ask spread tightest at open)
+ *   - Limit orders at mid-price only — never lift the ask
+ *   - Monitor bid-ask: skip if spread > 15bps of premium
+ *   - AAPL options ADV >> $2B/day — no ADV constraint (high liquidity)
+ *
+ * Regime gating:
+ *   RECYCLE / SYMBIOSIS → deploy (vol elevated, harvest funded, AAPL immune)
+ *   SHIELD (VIX 22-35)  → hold (continue accumulating harvest, deploy next session)
+ *   BLACK SWAN          → do NOT open new calls; protect existing positions
+ *
+ * inputs: {
+ *   aaplPrice        : current AAPL price
+ *   aaplIV           : AAPL 30-day implied volatility (decimal, e.g. 0.25)
+ *   targetNotional   : underlying dollar exposure to control (default: 30% of AUM)
+ *   daysToExpiry     : target option expiry (default: 45 calendar days)
+ *   harvestAvailable : total harvest cash available today
+ *   aum              : total AUM
+ *   engineState      : from getEngineState()
+ * }
+ */
+function buildAppleCallOverlay({
+  aaplPrice,
+  aaplIV        = 0.25,
+  targetNotional,
+  daysToExpiry  = 45,
+  harvestAvailable,
+  aum,
+  engineState,
+}) {
+  const notional = targetNotional ?? aum * 0.30;
+
+  // Regime gate: only deploy in RECYCLE or NORMAL/SYMBIOSIS
+  const blocked = engineState.riskLevel === "BLACK SWAN";
+  const hold    = engineState.riskLevel === "CRITICAL" || engineState.riskLevel === "HIGH";
+
+  if (blocked) {
+    return {
+      status:  "BLOCKED — BLACK SWAN",
+      action:  "Do NOT open new calls. Protect existing positions only.",
+      tranches: [],
+    };
+  }
+
+  // Strike ladder
+  const ladder = [
+    { label: "A — ATM",      otmPct:  0, deltaBand: 0.50, approxNd1: 0.40, weight: 0.40 },
+    { label: "B — +5% OTM",  otmPct: +5, deltaBand: 0.30, approxNd1: 0.28, weight: 0.40 },
+    { label: "C — +10% OTM", otmPct:+10, deltaBand: 0.18, approxNd1: 0.18, weight: 0.20 },
+  ];
+
+  const tSqrt = Math.sqrt(daysToExpiry / 365);
+
+  const tranches = ladder.map((leg, i) => {
+    const strike         = +(aaplPrice * (1 + leg.otmPct / 100)).toFixed(2);
+    // Premium estimate: S × IV × √T × N(d1)
+    const premiumPerShare = +(aaplPrice * aaplIV * tSqrt * leg.approxNd1).toFixed(2);
+    const premiumPerContract = Math.round(premiumPerShare * 100);   // 1 contract = 100 shares
+
+    // Underlying exposure for this tranche
+    const trancheNotional  = notional * leg.weight;
+    // Contracts = underlying_notional / (price × 100)
+    const contracts        = Math.round(trancheNotional / (aaplPrice * 100));
+    const totalPremium     = Math.round(contracts * premiumPerContract);
+    // Delta-adjusted underlying exposure
+    const deltaExposure    = Math.round(contracts * 100 * aaplPrice * leg.deltaBand);
+
+    // Execution: 1 tranche per day, first 30 min
+    const deployDay = `Day ${i + 1} — 9:30–10:00 AM ET`;
+
+    return {
+      tranche:           leg.label,
+      strike,
+      otmPct:            leg.otmPct,
+      delta:             leg.deltaBand,
+      daysToExpiry,
+      premiumPerShare,
+      premiumPerContract,
+      contracts,
+      totalPremium,
+      deltaExposure,
+      trancheNotional:   Math.round(trancheNotional),
+      deployDay,
+      harvestCoversDay:  harvestAvailable >= totalPremium,
+    };
+  });
+
+  const totalPremium      = tranches.reduce((s, t) => s + t.totalPremium, 0);
+  const totalContracts    = tranches.reduce((s, t) => s + t.contracts, 0);
+  const totalDeltaExposure= tranches.reduce((s, t) => s + t.deltaExposure, 0);
+  const harvestCoverage   = harvestAvailable > 0 ? harvestAvailable / totalPremium : 0;
+
+  // Portfolio-level Greeks summary
+  const portfolioVega  = Math.round(totalContracts * 100 * aaplPrice * aaplIV * tSqrt * 0.4);
+  const portfolioTheta = Math.round(-totalContracts * 100 * (aaplPrice * aaplIV * tSqrt) / daysToExpiry);
+
+  const status = blocked ? "BLOCKED" : hold
+    ? "HOLD — Accumulate Harvest. Deploy Next Session."
+    : "DEPLOY — Harvest Funded. Execute Tranche Schedule.";
+
+  return {
+    status,
+    action: blocked ? "Do NOT open new calls."
+      : hold ? "Hold calls. Continue 15% VIX harvest. Deploy on RECYCLE/SYMBIOSIS trigger."
+      : "Execute tranche A today. B tomorrow. C day 3. Limit orders at mid-price only.",
+    underlying:         "AAPL",
+    thesis:             "Edge AI on battery — immune to $119 oil spike. Hardware cycle = structural margin advantage.",
+    targetNotional:     Math.round(notional),
+    totalContracts,
+    totalPremium:       Math.round(totalPremium),
+    harvestAvailable:   Math.round(harvestAvailable),
+    harvestCoverage:    +harvestCoverage.toFixed(2),
+    harvestFunded:      harvestAvailable >= totalPremium,
+    totalDeltaExposure,
+    portfolioGreeks: {
+      delta: totalDeltaExposure,
+      vega:  portfolioVega,    // $ per 1% vol move
+      theta: portfolioTheta,   // $ per day (negative — cost of carry, funded by harvest)
+    },
+    tranches,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. 78-BIN OPTIONS SLICER  (5-min intervals, 1.5% of option vol per bin)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Trading day = 390 minutes. At 5-min intervals = 78 bins.
+ * Each bin cap = dailyOptionsAdv × 0.015 / 78
+ *
+ * Why 1.5% option vol (vs 3% equity ADV):
+ *   Options order books are thinner than equity. HFTs scan unusual options activity
+ *   as a leading indicator. 1.5% per-bin keeps each order inside retail/MM noise —
+ *   indistinguishable from normal delta hedging flow.
+ *
+ * At AAPL options ADV = $2B/day:
+ *   Per 5-min bin: $2B / 78 = $25.64M available
+ *   1.5% cap per bin: $384,600
+ *   Our order per bin: ~22 contracts × $175 × 100 = $385,000 — exactly at the cap
+ *
+ * inputs: {
+ *   totalContracts     : from appleCallOverlay.totalContracts
+ *   aaplPrice          : live price
+ *   dailyOptionsAdv    : AAPL daily options notional volume (default: $2B)
+ *   optionsBinCapPct   : participation cap per bin (default: 1.5%)
+ *   deployDays         : spread across N days (default: 3)
+ * }
+ */
+function buildOptionsBinSlicer({
+  totalContracts,
+  aaplPrice,
+  dailyOptionsAdv  = 2_000_000_000,
+  optionsBinCapPct = 0.015,
+  deployDays       = 3,
+}) {
+  const BINS_PER_DAY        = 78;                                    // 390min / 5min
+  const perBinAdv           = dailyOptionsAdv / BINS_PER_DAY;
+  const maxNotionalPerBin   = perBinAdv * optionsBinCapPct;
+  const maxContractsPerBin  = Math.floor(maxNotionalPerBin / (aaplPrice * 100));
+
+  const contractsPerDay     = Math.ceil(totalContracts / deployDays);
+  const binsNeededPerDay    = Math.ceil(contractsPerDay / maxContractsPerBin);
+  const contractsPerBin     = Math.ceil(contractsPerDay / binsNeededPerDay);
+  const notionalPerBin      = Math.round(contractsPerBin * aaplPrice * 100);
+
+  // Execution efficiency: how far inside the cap are we?
+  const participationPct    = notionalPerBin / perBinAdv;
+  const efficiencyPct       = +(Math.max(0, 1 - participationPct / optionsBinCapPct) * 100).toFixed(1);
+
+  // Market impact in bps (sqrt model, applied to options vol fraction)
+  const impactBps           = +(BASE_IMPACT_BPS * Math.sqrt(participationPct / NOISE_BAND_THRESHOLD)).toFixed(1);
+
+  return {
+    strategy:            "78-Bin VWAP — 5-Minute Intervals",
+    totalContracts,
+    deployDays,
+    contractsPerDay,
+    binsPerDay:          BINS_PER_DAY,
+    binsNeededPerDay,
+    contractsPerBin,
+    notionalPerBin:      Math.round(notionalPerBin),
+    maxContractsPerBin,
+    capPct:              +(optionsBinCapPct * 100).toFixed(1),
+    participationPct:    +(participationPct * 100).toFixed(2),
+    impactBps,
+    efficiencyPct,
+    status: participationPct <= optionsBinCapPct
+      ? `INSIDE NOISE BAND — ${impactBps}bps impact, ${efficiencyPct}% efficiency`
+      : "WARNING: EXCEEDS BIN CAP — reduce contracts per bin",
+    intervalMinutes:     5,
+    firstExecutionET:    "9:30 AM",
+    lastExecutionET:     "3:55 PM",
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10. GAMMA SQUEEZE PROJECTION  (self-replication table)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * As AAPL rallies, option deltas increase — the position self-replicates more
+ * delta exposure without any additional capital. This is the gamma squeeze effect.
+ *
+ * At each price level, shows:
+ *   - Portfolio delta (shares equivalent)
+ *   - Dollar gain per 1% AAPL move
+ *   - Cumulative unrealised P&L vs entry
+ *   - Self-replication factor vs entry delta
+ *
+ * Uses simplified delta estimation:
+ *   delta(S, K, σ, T) ≈ N(ln(S/K) / (σ × √T) + 0.5 × σ × √T)
+ */
+function buildGammaSqueezeProjection({
+  aaplPrice,
+  aaplIV,
+  daysToExpiry,
+  tranches,
+}) {
+  // Price levels to project (entry → target)
+  const priceLevels = [
+    aaplPrice * 1.00,    // entry
+    aaplPrice * 1.05,    // +5%
+    aaplPrice * 1.10,    // +10%
+    aaplPrice * 1.15,    // +15%
+    aaplPrice * 1.20,    // +20%
+    aaplPrice * 1.257,   // ~$220 at $175 entry
+  ];
+
+  function approxDelta(S, K, iv, T_days) {
+    const T = T_days / 365;
+    if (T <= 0) return S > K ? 1 : 0;
+    const d1 = (Math.log(S / K) + 0.5 * iv * iv * T) / (iv * Math.sqrt(T));
+    // Approximate N(d1) using logistic sigmoid
+    return 1 / (1 + Math.exp(-1.7 * d1));
+  }
+
+  // Entry delta for reference
+  const entryDeltas = tranches.map(t => approxDelta(aaplPrice, t.strike, aaplIV, daysToExpiry));
+  const entryPortfolioDelta = tranches.reduce((s, t, i) => s + t.contracts * 100 * aaplPrice * entryDeltas[i], 0);
+
+  const levels = priceLevels.map(S => {
+    const deltas       = tranches.map(t => approxDelta(S, t.strike, aaplIV, Math.max(1, daysToExpiry - 3)));
+    const sharesDelta  = tranches.reduce((s, t, i) => s + t.contracts * 100 * deltas[i], 0);
+    const dollarDelta  = sharesDelta * S;                         // $ move per 1 share gain
+    const pctGainDelta = Math.round(dollarDelta * 0.01);          // $ gain per 1% AAPL move
+    const cumPnl       = tranches.reduce((s, t, i) => {
+      const intrinsic   = Math.max(0, S - t.strike);
+      const timeValue   = t.premiumPerShare * (1 - (priceLevels.indexOf(S) * 0.15));  // rough decay
+      return s + t.contracts * 100 * (intrinsic + Math.max(0, timeValue) - t.premiumPerShare);
+    }, 0);
+    const selfReplication = +(dollarDelta / entryPortfolioDelta).toFixed(2);
+
+    return {
+      aaplPrice:         +S.toFixed(2),
+      pctFromEntry:      +(((S / aaplPrice) - 1) * 100).toFixed(1),
+      sharesDeltaEquiv:  Math.round(sharesDelta),
+      dollarPer1Pct:     Math.round(pctGainDelta),
+      cumUnrealisedPnl:  Math.round(cumPnl),
+      selfReplication,
+      note: selfReplication >= 3   ? "FULL GAMMA SQUEEZE — position self-replicating aggressively"
+          : selfReplication >= 2   ? "STRONG GAMMA — significant self-replication underway"
+          : selfReplication >= 1.5 ? "GAMMA BUILDING — delta expanding"
+          :                          "ENTRY — baseline delta",
+    };
+  });
+
+  return {
+    underlying:         "AAPL",
+    entryPrice:         aaplPrice,
+    entryDeltaDollar:   Math.round(entryPortfolioDelta),
+    levels,
+    keyLevel220: levels.find(l => l.aaplPrice >= aaplPrice * 1.25) ?? levels[levels.length - 1],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 11. SYSTEMIC ALPHA TRACKER  (LENS tab — Cell P1)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -725,6 +1029,11 @@ function buildAlerts(vix, oil, gex, engineState, alphaRisk, trsTracker) {
  *   cumulative493TrsGain:    0,
  *   cumulativeVixRollYield:  0,
  *   totalFinancingCosts:     0,
+ *   // Apple Call Overlay inputs (optional)
+ *   aaplPrice:          null,         // current AAPL price — set to enable overlay
+ *   aaplIV:             0.25,         // AAPL 30-day implied vol
+ *   appleTargetNotional: null,        // default: 30% of AUM
+ *   appleDaysToExpiry:  45,
  * }
  */
 function buildDashboard(inputs) {
@@ -747,6 +1056,10 @@ function buildDashboard(inputs) {
     cumulative493TrsGain     = 0,
     cumulativeVixRollYield   = 0,
     totalFinancingCosts      = 0,
+    aaplPrice                = null,
+    aaplIV                   = 0.25,
+    appleTargetNotional      = null,
+    appleDaysToExpiry        = 45,
   } = inputs;
 
   // Layer 1: engine state
@@ -789,7 +1102,37 @@ function buildDashboard(inputs) {
     ? buildClosingCross(unfilledByTicker, advByTicker)
     : null;
 
-  // Layer 8: Systemic Alpha (LENS tab P1)
+  // Layer 8: Apple Call Overlay (VIX harvest → AAPL calls)
+  const appleCallOverlay = aaplPrice !== null
+    ? buildAppleCallOverlay({
+        aaplPrice,
+        aaplIV,
+        targetNotional:  appleTargetNotional,
+        daysToExpiry:    appleDaysToExpiry,
+        harvestAvailable: harvestPlan.harvestAmount,
+        aum,
+        engineState,
+      })
+    : null;
+
+  // Layer 8b: 78-Bin options slicer and gamma squeeze projection
+  const appleOptionsBins = appleCallOverlay
+    ? buildOptionsBinSlicer({
+        totalContracts: appleCallOverlay.totalContracts,
+        aaplPrice,
+      })
+    : null;
+
+  const gammaSqueezeProjection = appleCallOverlay && appleCallOverlay.tranches.length > 0
+    ? buildGammaSqueezeProjection({
+        aaplPrice,
+        aaplIV,
+        daysToExpiry: appleDaysToExpiry,
+        tranches:     appleCallOverlay.tranches,
+      })
+    : null;
+
+  // Layer 9: Systemic Alpha (LENS tab P1)
   const systemicAlpha = buildSystemicAlpha({
     cumulative493TrsGain,
     cumulativeVixRollYield,
@@ -811,6 +1154,9 @@ function buildDashboard(inputs) {
     alphaRisk,
     symbiosisPnl,
     systemicAlpha,
+    appleCallOverlay,
+    appleOptionsBins,
+    gammaSqueezeProjection,
     closingCross,
     alerts,
   };
@@ -857,6 +1203,11 @@ if (typeof process !== "undefined" && process.argv[1] === __filename) {
     basketCost:   60_000_000,
     basketValue:  63_800_000,
     holdingDays:  14,
+    // Apple Call Overlay — $30M notional (30% of AUM), funded by $504k harvest
+    aaplPrice:           175,
+    aaplIV:              0.26,
+    appleTargetNotional: 30_000_000,
+    appleDaysToExpiry:   45,
   });
 
   console.log("=== $100M GHOST MODE ===");

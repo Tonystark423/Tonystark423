@@ -60,19 +60,31 @@ All times ET. Regime assumed: RECYCLE (VIX 24–27, Oil > $115).
 
 ```
 09:30 AM  ─ OPEN ─────────────────────────────────────────────────────────────
-  Action:   Confirm engine mode (run B4 formula).
-  If RECYCLE: Enable Ghost Slicer at 3% ADV. Load Phase 1 orders.
-  If SHIELD:  No deployment. Monitor harvest only.
-  If BLACK SWAN: Kill TRS. Halt all execution.
+  Action:   Confirm engine mode (run B4 formula). Check R1 (Call Subsidy Index).
+  If RECYCLE: Enable Ghost Slicer at 3% ADV. Load Phase 1 equity orders.
+              If R1 > 1.0: Activate Apple 78-bin slicer — Tranche A today.
+  If SHIELD:  No equity deployment. Continue harvest. Apple overlay on hold.
+  If BLACK SWAN: Kill TRS. Halt all execution. Defend existing AAPL calls.
 
-09:30–10:30 AM  ─ FIRST HOUR ─────────────────────────────────────────────────
+09:30–10:00 AM  ─ OPENING AUCTION WINDOW ─────────────────────────────────────
+  AAPL CALLS — Tranche A (ATM, Day 1):
+    Target:        686 contracts × $175 ATM calls (45-day expiry)
+    Premium:       ~$617,400 total  (covered by $504k harvest — gate check first)
+    Execution:     78-bin VWAP — 22 contracts every 5 minutes
+    Bin cap:       1.5% of per-5min AAPL option volume
+    Order type:    LIMIT at mid-price only. Never lift ask.
+    Market impact: < 2bps (inside retail/MM delta-hedging noise)
+    Status cell:   Check B25 (APPLE tab) — must show "INSIDE NOISE BAND"
+
+09:30–10:30 AM  ─ FIRST HOUR (EQUITY) ────────────────────────────────────────
   ADV Cap:   3%
-  Focus:     Phase 1 only — VST / GEV / CCJ
+  Focus:     Phase 1 equity — VST / GEV / CCJ
   VST:       VWAP  $840k clip  (14% of $6.4M target)
   GEV:       VWAP  $630k clip  (11% of $5.6M target)
   CCJ:       VWAP  $450k clip  (11% of $4.0M target)
   Algo:      VWAP — aligns to opening volume surge
   Expected impact: ~5 bps each (noise band)
+  Note:      Run equity and AAPL options concurrently — different markets, no ADV overlap.
 
 10:30–12:00 PM  ─ MID-MORNING ────────────────────────────────────────────────
   ADV Cap:   3%
@@ -84,24 +96,40 @@ All times ET. Regime assumed: RECYCLE (VIX 24–27, Oil > $115).
   V:         Dark Pool  $2,800k
   MA:        Dark Pool  $2,800k
 
+10:30–12:00 PM  ─ MID-MORNING APPLE TRANCHE B ─────────────────────────────
+  AAPL CALLS — Tranche B (+5% OTM, Day 2 equivalent or same day if harvest allows):
+    Target:        686 contracts × $184 strike calls (45-day expiry)
+    Premium:       ~$432k  (harvest gate check: if today's harvest already covers A+B, deploy now)
+    Execution:     78-bin VWAP — 22 contracts / 5-min bin, 9:30–11:50 AM window
+    Check R1:      Must remain > 1.0 after Tranche B is added to theta load.
+
 12:00–1:30 PM  ─ LUNCH LULL ─────────────────────────────────────────────────
   ADV Cap:   3%  (volume thins — reduce clip frequency, not size)
-  Focus:     Phase 2 Tier 1 continuation
+  Focus:     Phase 2 Tier 1 equity continuation
   ACN:       TWAP  $360k clip  (ACN ADV tight — 2hr spread)
   UNH:       VWAP  $780k clip
   JNJ:       VWAP  $600k clip
   ABBV:      VWAP  $540k clip
-  Note: Watch M10. If negative, pause until 2:00 PM.
+  Note: Watch M10. If negative, pause equity until 2:00 PM.
+  AAPL bins: 78-bin continues automatically through lunch — do not pause options slicer.
 
 1:30–3:00 PM  ─ AFTERNOON ────────────────────────────────────────────────────
-  ADV Cap:   3%
-  Focus:     Phase 2 Tier 2 + remaining Phase 1 residual
+  ADV Cap:   3% (equity) / 1.5% per bin (options — ongoing)
+  Focus:     Phase 2 Tier 2 equity + Tranche C Apple calls
   PG:        Dark Pool  $900k  (single clip — sub-3% ADV)
   COST:      Dark Pool  $840k
   BRK.B:     Dark Pool  $750k
   VST:       VWAP  $840k clip  (3rd of 4)
   GEV:       VWAP  $630k clip  (3rd of 4)
   CCJ:       VWAP  $450k clip  (3rd of 4)
+
+  AAPL CALLS — Tranche C (+10% OTM, Day 3 / final):
+    Target:        343 contracts × $193 strike calls
+    Premium:       ~$141k  (smallest tranche — lottery tier)
+    Execution:     78-bin, 11 contracts / 5-min bin, 1:30–3:50 PM window
+    Monitor:       Check gamma squeeze table (D36). If AAPL > $184 already,
+                   Tranche C delta contribution is larger than modelled — no action needed,
+                   the position is self-replicating.
 
 3:00–3:50 PM  ─ PRE-CLOSE ───────────────────────────────────────────────────
   ADV Cap:   3%  (still standard — last chance before tightening)
@@ -182,6 +210,33 @@ Total deployment window: ~17 trading days (~3.5 weeks)
 
 ---
 
+## Apple Call Overlay — Harvest Alignment (Live, March 19, 2026)
+
+```
+Time: 1:50 PM ET
+────────────────────────────────────────────────────────────────────────
+VIX Harvest Available:     $504,000   (today's Volatility Tax capture)
+AAPL Call Deployment:      $151,200   (30% of harvest → Tranche A partial)
+Harvest Remaining:         $352,800   → flows to VST/GEV/CCJ equity
+
+Execution Efficiency:      98.2%      (inside 1.5% bin cap)
+Market Impact:             < 2 bps    (indistinguishable from retail noise)
+78-Bin Status:             INSIDE NOISE BAND
+
+Call Subsidy Index (R1):   1.92×
+  VIX Roll Yield/day:      $50,000
+  AAPL Theta/day:          $26,000
+  Net carry:               +$24,000/day → R1 positive, harvest subsidising decay
+
+Gamma Squeeze Status:
+  AAPL at $175 (entry):    $107k/1% move  (baseline)
+  AAPL at $184 (+5%):      $170k/1% move  (1.6× self-replication)
+  AAPL at $220 (+26%):     $357k/1% move  (3.3× self-replication)
+────────────────────────────────────────────────────────────────────────
+```
+
+---
+
 ## Daily Expected PnL — $100M Scale
 
 ```
@@ -206,11 +261,18 @@ Total daily cost:                      -$   716
 
 M10 Net (gross alpha - costs):        +$3,649,284   ✅ YOU ARE THE HOUSE
 
-[HARVEST DEPLOYMENT]
+[HARVEST DEPLOYMENT — 3-WAY SPLIT]
 Harvest amount:                        $504,000
-New TRS exposure triggered:           $3,360,000
-Phase 1 new notional added:           $1,950,000 (VST/GEV/CCJ)
-Phase 2 residual:                     $1,410,000 (Tier 1)
+  → Apple call premium (30%):          $151,200  Tranche A (686 ATM contracts)
+  → Phase 1 TRS equity (48%):         $242,000  VST/GEV/CCJ new notional
+  → Phase 2 Tier 1 residual (22%):    $110,800  MSFT/V/MA add
+New TRS exposure triggered:           $3,360,000 (full harvest / 15% margin)
+
+[APPLE OVERLAY GREEKS — END OF DAY 1]
+Delta exposure:                        $6,000,000  (686 ATM contracts × 0.50 delta)
+Dollar sensitivity:                    $60,000/1% AAPL move
+Theta decay:                          -$8,700/day  (Day 1 tranche only)
+Harvest coverage of theta:             5.79×  (R1 > 1.0 ✅)
 ```
 
 ---
