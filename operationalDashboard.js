@@ -1540,6 +1540,398 @@ function buildAlerts(vix, oil, gex, engineState, alphaRisk, trsTracker) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 15. PHASE 2 — MULTI-PB COLLATERAL ARCHITECTURE
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Four modules covering Claim H (Collateral Asymmetry), Claim I (Capacity Map),
+// Claim J (Global Netting / Omnibus Exit), Claim K (Leakage Surveillance).
+//
+// ⚠️  REGULATORY BOUNDARY — NOT IMPLEMENTED:
+//   • "Wash Play" (simultaneous buy PB-1 / sell PB-2, net-zero intent to
+//     deceive market): wash trade under SEC Rule 10b-5 / CEA §4c(a)(5).
+//   • "Counterparty Leakage Test" bait iceberg (non-executable order placed
+//     deliberately): spoofing under Dodd-Frank CEA §4c(a)(5)(B).
+//   These objectives are achievable via legitimate means implemented below.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Claim H: Collateral Asymmetry Detector + TPRA Sweep Engine ───────────────
+
+/**
+ * Claim H.1 — buildCollateralAsymmetry
+ *
+ * Monitors margin rates across N prime brokers. When any PB's margin exceeds
+ * the system-wide weighted average by a configurable threshold, the engine
+ * calculates the minimum collateral sweep (via Tri-Party Repo) needed to
+ * neutralize the outlier without moving any market-facing position.
+ *
+ * The "Haircut Propagation" defense: a sudden 3σ VIX spike causes PB-1 to
+ * hike margin from 8% → 18% while PB-2/3 lag at 10%. The asymmetry is
+ * detected in real-time; a TPRA sweep routes excess liquidity from PB-2
+ * to PB-1's margin account before the call hits the desk.
+ *
+ * @param {object[]} primebrokers   Array of PB descriptors:
+ *   { id, name, marginRate, openNotional, collateralPosted, tpraLinked }
+ * @param {number}  outlierThreshold  Flag PB if margin > mean + threshold (default 0.04 = 4pp)
+ * @param {number}  vixCurrent        Current VIX (for 3σ stress hike simulation)
+ */
+function buildCollateralAsymmetry({ primeBrokers, outlierThreshold = 0.04, vixCurrent = 20 }) {
+  const total  = primeBrokers.reduce((s, pb) => s + pb.openNotional, 0);
+
+  // Weighted average margin rate across all PBs
+  const wtdAvgMargin = total > 0
+    ? primeBrokers.reduce((s, pb) => s + pb.marginRate * (pb.openNotional / total), 0)
+    : 0;
+
+  // Per-PB analysis
+  const pbAnalysis = primeBrokers.map(pb => {
+    const marginRequired   = pb.openNotional * pb.marginRate;
+    const marginExcess     = pb.collateralPosted - marginRequired;  // positive = over-collateralized
+    const isOutlier        = pb.marginRate > wtdAvgMargin + outlierThreshold;
+    const shortfall        = isOutlier ? Math.max(0, marginRequired - pb.collateralPosted) : 0;
+    const sweepNeeded      = isOutlier && shortfall > 0 && pb.tpraLinked;
+
+    return {
+      id:              pb.id,
+      name:            pb.name,
+      marginRate:      +(pb.marginRate * 100).toFixed(2),
+      marginRequired:  Math.round(marginRequired),
+      collateralPosted: Math.round(pb.collateralPosted),
+      marginExcess:    Math.round(marginExcess),
+      shortfall:       Math.round(shortfall),
+      isOutlier,
+      sweepNeeded,
+      tpraLinked:      pb.tpraLinked,
+    };
+  });
+
+  // TPRA sweep plan: pull from over-collateralized PBs to fill outlier shortfalls
+  const outliers    = pbAnalysis.filter(p => p.sweepNeeded);
+  const donors      = pbAnalysis.filter(p => p.marginExcess > 0 && p.tpraLinked)
+    .sort((a, b) => b.marginExcess - a.marginExcess);
+
+  const sweepPlan = [];
+  let remainingNeeded = outliers.reduce((s, p) => s + p.shortfall, 0);
+
+  for (const donor of donors) {
+    if (remainingNeeded <= 0) break;
+    const sweep = Math.min(donor.marginExcess, remainingNeeded);
+    const target = outliers.find(o => o.shortfall > 0);
+    if (!target) break;
+    sweepPlan.push({
+      from:        donor.name,
+      to:          target.name,
+      amount:      Math.round(sweep),
+      mechanism:   "TRI-PARTY REPO",
+      action:      `Transfer $${Math.round(sweep).toLocaleString()} collateral via pre-positioned TPRA link`,
+    });
+    remainingNeeded -= sweep;
+  }
+
+  const asymmetryResolved = remainingNeeded <= 0;
+
+  // 3σ stress simulation: what happens if VIX spikes 35% from current
+  const stressVix        = vixCurrent * 1.35;
+  const stressHikePb1    = Math.min(0.25, wtdAvgMargin * 2.25);    // aggressive PB1 hike
+  const stressShortfall  = primeBrokers[0]
+    ? Math.max(0, primeBrokers[0].openNotional * (stressHikePb1 - primeBrokers[0].marginRate))
+    : 0;
+
+  let asymmetryStatus;
+  if (outliers.length === 0)         { asymmetryStatus = "BALANCED — no margin outliers"; }
+  else if (asymmetryResolved)        { asymmetryStatus = `SWEEP READY — ${sweepPlan.length} TPRA transfer(s) queued`; }
+  else                               { asymmetryStatus = "LOCKED — insufficient TPRA liquidity; escalate to desk"; }
+
+  return {
+    wtdAvgMarginPct:  +(wtdAvgMargin * 100).toFixed(2),
+    totalNotional:    Math.round(total),
+    pbAnalysis,
+    outlierCount:     outliers.length,
+    sweepPlan,
+    totalSweepAmount: sweepPlan.reduce((s, sw) => s + sw.amount, 0),
+    asymmetryResolved,
+    asymmetryStatus,
+    stressScenario: {
+      stressVix:       +stressVix.toFixed(1),
+      stressHikePct:   +(stressHikePb1 * 100).toFixed(1),
+      stressShortfall: Math.round(stressShortfall),
+      preEmptAction:   stressShortfall > 0
+        ? `Pre-position $${Math.round(stressShortfall).toLocaleString()} TPRA buffer at PB-1 NOW (before VIX spike)`
+        : "Buffer adequate for stress scenario",
+    },
+  };
+}
+
+// ── Claim I: C_m Capacity Mapping / Thermal Guardrail ────────────────────────
+
+/**
+ * Claim I.1 — buildCapacityMap
+ *
+ * Computes the Capacity scalar C_m for a target notional expansion across
+ * all venues. If the required execution consumes > 10% of Top-of-Book (ToB)
+ * depth on any single venue, the engine throttles to "Passive Only" and
+ * distributes remaining notional to under-utilized venues.
+ *
+ * Thermal Guardrail: prevents the engine from becoming its own market impact.
+ * At $150M, crossing 10% ToB means you are no longer "market noise" — you
+ * are a price-mover. C_m falls to 0 at that threshold, halting expansion.
+ *
+ * @param {object[]} venues   Array of venue descriptors:
+ *   { id, name, tobDepthDollars, currentAllocation }
+ * @param {number}   targetNewNotional  New notional to deploy ($)
+ * @param {number}   tobCapPct          ToB participation cap (default 0.10 = 10%)
+ */
+function buildCapacityMap({ venues, targetNewNotional, tobCapPct = 0.10 }) {
+  const venueAnalysis = venues.map(v => {
+    const tobCapDollars   = v.tobDepthDollars * tobCapPct;
+    const currentPct      = v.currentAllocation / v.tobDepthDollars;
+    const remainingCap    = Math.max(0, tobCapDollars - v.currentAllocation);
+    const thermalStatus   = currentPct >= tobCapPct ? "THROTTLED"
+      : currentPct >= tobCapPct * 0.75 ? "WARM"
+      : "COOL";
+
+    return {
+      id:                v.id,
+      name:              v.name,
+      tobDepth:          Math.round(v.tobDepthDollars),
+      tobCapDollars:     Math.round(tobCapDollars),
+      currentAllocation: Math.round(v.currentAllocation),
+      currentPct:        +(currentPct * 100).toFixed(2),
+      remainingCap:      Math.round(remainingCap),
+      thermalStatus,
+    };
+  });
+
+  const totalRemainingCap = venueAnalysis.reduce((s, v) => s + v.remainingCap, 0);
+  const canDeploy         = Math.min(targetNewNotional, totalRemainingCap);
+  const throttled         = targetNewNotional > totalRemainingCap;
+
+  // Distribute deployable notional to coolest venues first
+  const coolVenues   = [...venueAnalysis].filter(v => v.thermalStatus !== "THROTTLED")
+    .sort((a, b) => a.currentPct - b.currentPct);   // coolest first
+
+  const allocationPlan = [];
+  let remaining = canDeploy;
+  for (const v of coolVenues) {
+    if (remaining <= 0) break;
+    const alloc = Math.min(v.remainingCap, remaining);
+    allocationPlan.push({ venue: v.name, allocation: Math.round(alloc), thermalStatus: v.thermalStatus });
+    remaining -= alloc;
+  }
+
+  // C_m scalar: ratio of deployable to target (1.0 = full capacity, 0 = fully throttled)
+  const cm = targetNewNotional > 0 ? Math.min(1, canDeploy / targetNewNotional) : 0;
+
+  let thermalGuidance;
+  if (cm >= 0.95)        { thermalGuidance = "FULL CAPACITY — deploy at normal pace"; }
+  else if (cm >= 0.70)   { thermalGuidance = "PARTIAL CAPACITY — throttle to available venues"; }
+  else if (cm >= 0.30)   { thermalGuidance = "CONSTRAINED — reduce target or wait for TOB recovery"; }
+  else                   { thermalGuidance = "THERMAL HALT — all venues at cap; passive-only mode"; }
+
+  return {
+    cm:                 +cm.toFixed(3),
+    targetNewNotional:  Math.round(targetNewNotional),
+    canDeploy:          Math.round(canDeploy),
+    throttledAmount:    Math.round(Math.max(0, targetNewNotional - canDeploy)),
+    throttled,
+    venueAnalysis,
+    allocationPlan,
+    thermalGuidance,
+    tobCapPct:          +(tobCapPct * 100).toFixed(0) + "%",
+    passiveOnlyMode:    cm < 0.05,
+  };
+}
+
+// ── Claim J: Global Netting Engine + Omnibus Exit ────────────────────────────
+
+/**
+ * Claim J.1 — buildGlobalNettingEngine
+ *
+ * Aggregates positions across all prime brokers, computes net exposure
+ * per ticker, identifies cross-PB offsets, and generates the minimum-
+ * touch Omnibus Exit plan that unwinds net exposure with fewest executions.
+ *
+ * This is the legitimate mechanism for cross-PB rebalancing: actual position
+ * reduction at one broker and addition at another, based on genuine portfolio
+ * management objectives (concentration limits, margin optimization) — not
+ * round-trip trading designed to deceive.
+ *
+ * @param {object[]} pbPositions   Per-PB positions:
+ *   [{ pbId, pbName, positions: [{ ticker, notional, side:'LONG'|'SHORT' }] }]
+ * @param {object}   collateralMap  { pbId: collateralPosted } for margin routing
+ */
+function buildGlobalNettingEngine({ pbPositions, collateralMap = {} }) {
+  // Step 1: aggregate net notional per ticker across all PBs
+  const netByTicker = {};
+  const grossByPb   = {};
+
+  for (const pb of pbPositions) {
+    let pbGross = 0;
+    for (const pos of pb.positions) {
+      const sign = pos.side === "LONG" ? 1 : -1;
+      netByTicker[pos.ticker] = (netByTicker[pos.ticker] ?? 0) + sign * pos.notional;
+      pbGross += pos.notional;
+    }
+    grossByPb[pb.pbId] = { name: pb.pbName, gross: pbGross, collateral: collateralMap[pb.pbId] ?? 0 };
+  }
+
+  // Step 2: identify offsetting positions (same ticker, opposite sides across PBs)
+  const offsets = [];
+  for (const [ticker, net] of Object.entries(netByTicker)) {
+    const longLegs  = pbPositions.flatMap(pb =>
+      pb.positions.filter(p => p.ticker === ticker && p.side === "LONG")
+        .map(p => ({ ...p, pbId: pb.pbId, pbName: pb.pbName })));
+    const shortLegs = pbPositions.flatMap(pb =>
+      pb.positions.filter(p => p.ticker === ticker && p.side === "SHORT")
+        .map(p => ({ ...p, pbId: pb.pbId, pbName: pb.pbName })));
+
+    if (longLegs.length > 0 && shortLegs.length > 0) {
+      const offsetNotional = Math.min(
+        longLegs.reduce((s, l) => s + l.notional, 0),
+        shortLegs.reduce((s, l) => s + l.notional, 0),
+      );
+      offsets.push({
+        ticker,
+        offsetNotional: Math.round(offsetNotional),
+        longAt:  longLegs.map(l => l.pbName).join("/"),
+        shortAt: shortLegs.map(l => l.pbName).join("/"),
+        action: `Book-transfer $${Math.round(offsetNotional).toLocaleString()} ${ticker} offset via internal netting — no market execution needed`,
+      });
+    }
+  }
+
+  // Step 3: Omnibus Exit plan — minimum-touch unwind sequence
+  const totalGross     = Object.values(grossByPb).reduce((s, pb) => s + pb.gross, 0);
+  const omnibusExit    = Object.entries(netByTicker)
+    .filter(([, net]) => Math.abs(net) > 100_000)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    .map(([ticker, net]) => ({
+      ticker,
+      netNotional:   Math.round(net),
+      netSide:       net > 0 ? "NET LONG" : "NET SHORT",
+      exitAction:    net > 0 ? `SELL $${Math.round(Math.abs(net)).toLocaleString()}` : `COVER $${Math.round(Math.abs(net)).toLocaleString()}`,
+      routingNote:   "Ghost Slicer 3%/5% ADV clips via C_m-cleared venues",
+    }));
+
+  // Step 4: collateral rebalancing recommendation (not a wash — actual margin efficiency)
+  const pbsByCollateralEfficiency = Object.entries(grossByPb)
+    .map(([id, pb]) => ({
+      pbId:             id,
+      name:             pb.name,
+      grossNotional:    pb.gross,
+      collateralPosted: pb.collateral,
+      utilizationPct:   pb.collateral > 0 ? +(pb.gross / pb.collateral * 100).toFixed(1) : 0,
+    }))
+    .sort((a, b) => b.utilizationPct - a.utilizationPct);
+
+  return {
+    totalGrossNotional: Math.round(totalGross),
+    netPositions:       Object.entries(netByTicker).map(([t, n]) => ({ ticker: t, net: Math.round(n) })),
+    internalOffsets:    offsets,
+    internalOffsetValue: offsets.reduce((s, o) => s + o.offsetNotional, 0),
+    omnibusExit,
+    pbsByCollateralEfficiency,
+    nettingSummary: `${offsets.length} cross-PB offsets identified ($${offsets.reduce((s,o)=>s+o.offsetNotional,0).toLocaleString()} nettable without market execution)`,
+  };
+}
+
+// ── Claim K: Leakage Surveillance (Post-Execution Correlation) ───────────────
+
+/**
+ * Claim K.1 — buildLeakageSurveillance
+ *
+ * Detects information leakage from PB internal desks by monitoring the
+ * correlation between the engine's OWN execution timestamps and subsequent
+ * adverse price moves on lit venues — using actual fills, never fake orders.
+ *
+ * If PB-X's internal market-making desk has access to client order flow
+ * (a "Chinese Wall" breach), fills routed via PB-X will show a higher
+ * adverse-selection ratio than fills routed via PB-Y. The difference in
+ * adverse-selection rates across PBs IS the leakage signal — no bait needed.
+ *
+ * @param {object[]} fillHistory   Array of completed fills:
+ *   { pbId, ticker, side, fillPrice, fillTimeMs, postFillPrice2ms, postFillPrice50ms, notional }
+ * @param {number}   leakageThresholdBps  Flag PB if adverse selection > threshold (default 2bps)
+ */
+function buildLeakageSurveillance({ fillHistory, leakageThresholdBps = 2.0 }) {
+  if (fillHistory.length === 0) return { status: "INSUFFICIENT_DATA", pbProfiles: [] };
+
+  // Group fills by PB
+  const byPb = {};
+  for (const fill of fillHistory) {
+    if (!byPb[fill.pbId]) byPb[fill.pbId] = { pbId: fill.pbId, fills: [] };
+    byPb[fill.pbId].fills.push(fill);
+  }
+
+  const pbProfiles = Object.values(byPb).map(({ pbId, fills }) => {
+    // Adverse selection: for each fill, measure price move 2ms and 50ms after fill
+    // If LONG fill → adverse = price dropped. If SHORT fill → adverse = price rose.
+    const asMetrics2ms  = [];
+    const asMetrics50ms = [];
+
+    for (const f of fills) {
+      const sign = f.side === "BUY" ? 1 : -1;
+      const as2ms  = sign * (f.postFillPrice2ms  - f.fillPrice) / f.fillPrice * 10000;  // bps
+      const as50ms = sign * (f.postFillPrice50ms - f.fillPrice) / f.fillPrice * 10000;
+      asMetrics2ms.push(as2ms);
+      asMetrics50ms.push(as50ms);
+    }
+
+    const avgAs2ms  = asMetrics2ms.reduce((s, v) => s + v, 0) / fills.length;
+    const avgAs50ms = asMetrics50ms.reduce((s, v) => s + v, 0) / fills.length;
+
+    // Correlation between fill notional and subsequent adverse move (size-informed leakage)
+    const notionals    = fills.map(f => f.notional);
+    const meanN        = notionals.reduce((s, v) => s + v, 0) / fills.length;
+    const meanAs       = avgAs2ms;
+    let covNum = 0, covDenN = 0, covDenA = 0;
+    for (let i = 0; i < fills.length; i++) {
+      covNum  += (notionals[i] - meanN) * (asMetrics2ms[i] - meanAs);
+      covDenN += (notionals[i] - meanN) ** 2;
+      covDenA += (asMetrics2ms[i] - meanAs) ** 2;
+    }
+    const leakageCorrelation = covDenN > 0 && covDenA > 0
+      ? +(covNum / Math.sqrt(covDenN * covDenA)).toFixed(3)
+      : 0;
+
+    // A high negative correlation means larger fills → more adverse price move → leakage
+    const leakageFlag   = avgAs2ms < -leakageThresholdBps || leakageCorrelation < -0.60;
+    const hostileFlag   = leakageCorrelation < -0.80 && avgAs2ms < -leakageThresholdBps * 2;
+
+    return {
+      pbId,
+      fillCount:         fills.length,
+      avgAdverseSelection2ms:  +avgAs2ms.toFixed(2),
+      avgAdverseSelection50ms: +avgAs50ms.toFixed(2),
+      leakageCorrelation,
+      leakageFlag,
+      hostileFlag,
+      recommendation: hostileFlag
+        ? `PB ${pbId}: HIGH LEAKAGE (correlation ${leakageCorrelation}). Route ≤ 5% of flow here. Shift 80% to dark-pool-specialist node.`
+        : leakageFlag
+        ? `PB ${pbId}: MODERATE LEAKAGE. Reduce lit-venue clips by 50%. Monitor next 20 fills.`
+        : `PB ${pbId}: CLEAN — adverse selection within ${leakageThresholdBps}bps threshold.`,
+    };
+  });
+
+  const hostilePBs  = pbProfiles.filter(p => p.hostileFlag);
+  const leakyPBs    = pbProfiles.filter(p => p.leakageFlag && !p.hostileFlag);
+  let leakageStatus;
+  if (hostilePBs.length > 0)     { leakageStatus = `HOSTILE NODE DETECTED: ${hostilePBs.map(p => p.pbId).join(", ")}`; }
+  else if (leakyPBs.length > 0)  { leakageStatus = `LEAKAGE WATCH: ${leakyPBs.map(p => p.pbId).join(", ")}`; }
+  else                            { leakageStatus = "CLEAN — no systematic adverse selection detected"; }
+
+  return {
+    leakageStatus,
+    pbProfiles,
+    hostilePBs:  hostilePBs.map(p => p.pbId),
+    leakyPBs:    leakyPBs.map(p => p.pbId),
+    pivot: hostilePBs.length > 0
+      ? `Shift 80% of expansion to dark-pool-specialist node. Keep ≤ $5M "noise" flow at hostile PB for surveillance continuity.`
+      : null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 14. SVE SURVIVAL ARCHITECTURE  (Claims D / E / F / G)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1955,6 +2347,12 @@ function buildDashboard(inputs) {
     m2Current                = null,   // current M2 ($B)
     m2FourWeeksAgo           = null,   // M2 four weeks ago ($B)
     collateralDeposited      = 0,      // existing flywheel collateral ($)
+    // Phase 2 — Multi-PB Collateral Architecture (optional)
+    primeBrokers             = [],     // [{ id, name, marginRate, openNotional, collateralPosted, tpraLinked }]
+    venues                   = [],     // [{ id, name, tobDepthDollars, currentAllocation }]
+    pbPositions              = [],     // [{ pbId, pbName, positions: [{ticker,notional,side}] }]
+    pbCollateralMap          = {},     // { pbId: collateralPosted }
+    fillHistory              = [],     // [{ pbId, ticker, side, fillPrice, postFillPrice2ms, ... }]
   } = inputs;
 
   // Layer 1: engine state
@@ -2113,6 +2511,26 @@ function buildDashboard(inputs) {
       })
     : null;
 
+  // Layer 10b: Phase 2 — Multi-PB Collateral Architecture
+  const collateralAsymmetry = primeBrokers.length > 0
+    ? buildCollateralAsymmetry({ primeBrokers, vixCurrent: vix })
+    : null;
+
+  const capacityMap = venues.length > 0
+    ? buildCapacityMap({
+        venues,
+        targetNewNotional: harvestPlan.harvestAmount + (sovereignFlywheel?.incrementalTrsCap ?? 0),
+      })
+    : null;
+
+  const globalNetting = pbPositions.length > 0
+    ? buildGlobalNettingEngine({ pbPositions, collateralMap: pbCollateralMap })
+    : null;
+
+  const leakageSurveillance = fillHistory.length > 0
+    ? buildLeakageSurveillance({ fillHistory })
+    : null;
+
   // Layer 11: alerts
   const alerts = buildAlerts(vix, oil, gex, engineState, alphaRisk, trsTracker);
 
@@ -2149,6 +2567,11 @@ function buildDashboard(inputs) {
     vrtStepDown,
     convexityCushion,
     survivalStatus,
+    // Phase 2
+    collateralAsymmetry,
+    capacityMap,
+    globalNetting,
+    leakageSurveillance,
     closingCross,
     alerts,
   };
