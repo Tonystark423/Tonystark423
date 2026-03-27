@@ -4,3 +4,5 @@ plotly
 streamlit
 requests
 python-dotenv
+pyTelegramBotAPI
+yfinance
