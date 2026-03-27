@@ -9,7 +9,7 @@ import pandas as pd
 
 from news_fetcher import fetch_market_news, fetch_company_news, fetch_vix
 from sentiment_engine import calculate_greed_score, score_to_label
-from ledger_sync import append_snapshot, read_ledger
+from ledger_sync import append_snapshot, read_ledger, process_derisking_sale
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -125,6 +125,7 @@ st.caption("Calculates how many shares to sell to fully recover your initial pri
 pt_col1, pt_col2 = st.columns(2)
 
 with pt_col1:
+    pt_ticker = st.text_input("Ticker / Position Label", value="VIXY", help="Must match an entry in holdings.csv to log the sale.")
     pt_shares = st.number_input("Shares Owned", min_value=0.01, value=100.0, step=1.0)
     pt_cost_basis = st.number_input("Avg Cost Basis ($ per share)", min_value=0.01, value=20.00, step=0.01, format="%.2f")
 
@@ -182,6 +183,16 @@ if st.button("Calculate"):
             st.write(f"Proceeds could buy ~**{voo_shares:.2f} shares** of an index fund at current price.")
         else:
             st.info("No active buy signal from last sentinel snapshot. Run 'Refresh Sentinel' first.")
+
+    st.markdown("---")
+    st.markdown("**Log Partial Sale to Ledger**")
+    st.caption(f"Will sell {shares_to_sell:.4f} shares of **{pt_ticker}** @ ${pt_current_price:.2f} and zero the remaining cost basis.")
+    if st.button("Log De-Risking Sale to Holdings"):
+        try:
+            msg = process_derisking_sale(pt_ticker, shares_to_sell, pt_current_price)
+            st.success(msg)
+        except ValueError as e:
+            st.error(str(e))
 
 # ---------------------------------------------------------------------------
 # Ledger history table
