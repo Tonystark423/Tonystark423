@@ -116,6 +116,74 @@ if st.button("Refresh Sentinel"):
             st.error(f"Error fetching data: {exc}")
 
 # ---------------------------------------------------------------------------
+# Profit Taker Calculator
+# ---------------------------------------------------------------------------
+st.markdown("---")
+st.subheader("Profit Taker Calculator")
+st.caption("Calculates how many shares to sell to fully recover your initial principal, leaving the remainder as a zero-cost position.")
+
+pt_col1, pt_col2 = st.columns(2)
+
+with pt_col1:
+    pt_shares = st.number_input("Shares Owned", min_value=0.01, value=100.0, step=1.0)
+    pt_cost_basis = st.number_input("Avg Cost Basis ($ per share)", min_value=0.01, value=20.00, step=0.01, format="%.2f")
+
+with pt_col2:
+    pt_current_price = st.number_input("Current Price ($ per share)", min_value=0.01, value=31.15, step=0.01, format="%.2f")
+    pt_mmf_yield = st.number_input("MMF Reinvestment Yield (%)", min_value=0.0, value=3.58, step=0.01, format="%.2f",
+                                    help="e.g. VMFXX current yield. Used to estimate annual income on parked proceeds.")
+
+if st.button("Calculate"):
+    total_cost        = pt_shares * pt_cost_basis
+    total_value       = pt_shares * pt_current_price
+    unrealized_gain   = total_value - total_cost
+    gain_pct          = (unrealized_gain / total_cost) * 100
+
+    shares_to_sell    = total_cost / pt_current_price          # recover exactly what you paid
+    shares_to_sell    = min(shares_to_sell, pt_shares)         # can't sell more than you own
+    proceeds          = shares_to_sell * pt_current_price
+    remaining_shares  = pt_shares - shares_to_sell
+    remaining_value   = remaining_shares * pt_current_price
+    annual_mmf_income = proceeds * (pt_mmf_yield / 100)
+
+    # Signal: High VIX + Low Sentiment = contrarian buy signal
+    buy_signal = False
+    buy_signal_note = ""
+    try:
+        last = read_ledger(tail=1)
+        if last:
+            last_vix   = float(last[-1]["vix"]) if last[-1]["vix"] != "N/A" else 0.0
+            last_score = float(last[-1]["sentiment_score"])
+            if last_vix >= 30 and last_score < -0.1:
+                buy_signal = True
+                buy_signal_note = f"VIX={last_vix:.1f}, Sentiment={last_score:+.4f} — contrarian buy conditions present."
+    except Exception:
+        pass
+
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Total Cost Basis",   f"${total_cost:,.2f}")
+    r1.metric("Total Market Value", f"${total_value:,.2f}")
+    r2.metric("Unrealized Gain",    f"${unrealized_gain:,.2f}", delta=f"{gain_pct:.1f}%")
+    r2.metric("Shares to Sell",     f"{shares_to_sell:.4f}", help="Sells just enough to recover your full principal.")
+    r3.metric("Sale Proceeds",      f"${proceeds:,.2f}")
+    r3.metric("Remaining Shares",   f"{remaining_shares:.4f}", help="These shares cost you nothing — pure upside.")
+
+    st.markdown("---")
+    mmf_col, reinvest_col = st.columns(2)
+    with mmf_col:
+        st.markdown("**Yield Arbitrage (MMF Park)**")
+        st.write(f"Park **${proceeds:,.2f}** in MMF at **{pt_mmf_yield:.2f}%**")
+        st.write(f"Estimated annual income: **${annual_mmf_income:,.2f}**")
+    with reinvest_col:
+        st.markdown("**Contrarian Equity Signal**")
+        if buy_signal:
+            st.success(f"BUY SIGNAL active — {buy_signal_note}")
+            voo_shares = proceeds / pt_current_price
+            st.write(f"Proceeds could buy ~**{voo_shares:.2f} shares** of an index fund at current price.")
+        else:
+            st.info("No active buy signal from last sentinel snapshot. Run 'Refresh Sentinel' first.")
+
+# ---------------------------------------------------------------------------
 # Ledger history table
 # ---------------------------------------------------------------------------
 st.markdown("---")
