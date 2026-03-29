@@ -89,13 +89,29 @@ def commits_in_window(since: str) -> list[dict]:
     return commits
 
 
-def test_files_changed_in_commit(commit_hash: str) -> list[Path]:
-    """Return test_*.py files that were added or modified in this commit."""
+def test_files_changed_in_commit(
+    commit_hash: str,
+    exclude: list[str] | None = None,
+) -> list[Path]:
+    """
+    Return test_*.py files added or modified in this commit, minus any
+    path that matches an exclude glob pattern.
+
+    Exclude patterns follow fnmatch syntax, same as .gitignore-style:
+        *generated*   matches any path containing "generated"
+        *_pb2.py      matches protobuf-generated Python files
+        tests/mocks/* matches everything under tests/mocks/
+    """
+    import fnmatch
     out = run(["git", "diff-tree", "--no-commit-id", "-r", "--name-only", commit_hash])
-    return [
-        Path(p) for p in out.strip().splitlines()
-        if p and Path(p).name.startswith("test_") and p.endswith(".py")
-    ]
+    files = []
+    for p in out.strip().splitlines():
+        if not (p and Path(p).name.startswith("test_") and p.endswith(".py")):
+            continue
+        if exclude and any(fnmatch.fnmatch(p, pat) for pat in exclude):
+            continue
+        files.append(Path(p))
+    return files
 
 
 def changed_line_numbers_in_commit(commit_hash: str, file_path: Path) -> set[int]:
@@ -294,6 +310,21 @@ def main(argv: list[str] | None = None) -> int:
         "--min-commits", type=int, default=1, metavar="N",
         help="Minimum commits to appear in report (default: 1)",
     )
+    parser.add_argument(
+        "--min-lines", type=int, default=0, metavar="N",
+        help=(
+            "Minimum total lines changed by an author to appear in the report. "
+            "Use to suppress noise from typo fixes and README-only PRs (e.g. 10)."
+        ),
+    )
+    parser.add_argument(
+        "--exclude", nargs="*", default=[], metavar="GLOB",
+        help=(
+            "fnmatch glob patterns for test files to exclude from analysis. "
+            "Useful for generated mocks, proto stubs, and scaffold files. "
+            "Example: --exclude '*generated*' '*_pb2*' 'tests/mocks/*'"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.since:
@@ -317,12 +348,16 @@ def main(argv: list[str] | None = None) -> int:
         if author not in author_stats:
             author_stats[author] = AuthorStats(author=author)
 
-        for test_file in test_files_changed_in_commit(commit["hash"]):
+        for test_file in test_files_changed_in_commit(commit["hash"], args.exclude):
             analyse_author_commit(commit["hash"], test_file, author_stats[author])
 
-    # Filter and sort
+    # Filter: minimum commits AND minimum lines changed
     rows = sorted(
-        [s for s in author_stats.values() if s.commits_analysed >= args.min_commits],
+        [
+            s for s in author_stats.values()
+            if s.commits_analysed >= args.min_commits
+            and s.total_lines >= args.min_lines
+        ],
         key=lambda s: s.density,
         reverse=True,
     )

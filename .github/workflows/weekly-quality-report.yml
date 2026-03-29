@@ -24,7 +24,11 @@ jobs:
       - name: Generate quality report
         id: report
         run: |
-          python scripts/weekly_quality_report.py --days 7 --format markdown \
+          python scripts/weekly_quality_report.py \
+            --days 7 \
+            --format markdown \
+            --min-lines 10 \
+            --exclude '*generated*' '*_pb2*' '*mock*' '*scaffold*' \
             > /tmp/report.md
           # Capture as a multiline output value
           {
