@@ -195,6 +195,21 @@ def test_limit_boundary_sweep(client, auth, requested, expected_max):
 
 ---
 
+## High Density Cheat Sheet
+
+Quick-reference for staying above 0.5 density in common scenarios.
+"A vanity test is a straight line through the middle. A pro test suite is an exhaustive map of every possible detour."
+
+| Scenario | Vanity mistake | High density approach | Example in this repo |
+|---|---|---|---|
+| **Collection / loop** | `assert len(results) == 3` | Assert a property of *every item*, not just the count | `assert all(r["category"] == target for r in results)` — `test_nested_logic.py` |
+| **Nested if** | Test only the true/success path | Test each branch independently; assert the *reason* for rejection, not just the status code | `assert "No valid fields" in resp.get_json()["error"]` — `test_nested_logic.py` |
+| **Data fetching** | `assert data is not None` | Assert specific fields match exact expected values; verify via DB read, not API response | `assert row["status"] == "active"` direct DB read — `test_db_spy.py` |
+| **Side effects** | Assume the DB saved it | `mock.assert_called_with(exact_payload)` for writes; `mock.assert_not_called()` for rejections | `mock_get_db.assert_not_called()` on failed auth — `test_mutations.py` |
+| **Boolean gates** | Test only the `(True, True)` row | Cover every row of the truth table; one test per operator mutation | Full 4-row table in `test_mutations.py`; documented in `docs/adr/001-...` |
+| **Boundary values** | Test one valid input | Parametrize: at threshold, one above, one below, zero, negative, null | `@pytest.mark.parametrize` limit sweep — `test_nested_logic.py` |
+| **Error branches** | Test happy path, skip error handler | Test the dark alley first, in isolation, before the success path | Inner gate tests ordered outside-in — `TestInnerGatePattern` |
+
 ## Test File Reference
 
 | File | Patterns covered |
