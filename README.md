@@ -65,6 +65,18 @@ All endpoints require HTTP Basic Auth.
 | `DELETE` | `/api/assets/<id>` | Delete an asset |
 | `GET` | `/api/export` | Download all assets as CSV |
 
+## Testing
+
+```bash
+# Full suite with coverage
+pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=80
+
+# Assertion density quality gate
+python scripts/check_assertion_density.py tests/
+```
+
+See [TESTING_STANDARDS.md](TESTING_STANDARDS.md) for the full playbook: patterns, examples, and the CI gate configuration.
+
 ## Security Notes
 
 - Never commit `ledger.db` or `.env` to git (both are in `.gitignore`)
