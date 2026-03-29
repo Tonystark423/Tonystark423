@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stark Financial Holdings LLC — Asset Ledger</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>Stark Financial Holdings LLC</h1>
+      <span class="subtitle">Asset Ledger</span>
+    </div>
+    <div class="header-actions">
+      <button id="exportBtn" class="btn btn-secondary">Export CSV</button>
+      <button id="addBtn" class="btn btn-primary">+ Add Asset</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <input type="search" id="searchInput" placeholder="Search assets…" autocomplete="off">
+      <select id="categoryFilter">
+        <option value="">All Categories</option>
+        <option value="Proprietary IP">Proprietary IP</option>
+        <option value="Computer Resources">Computer Resources</option>
+        <option value="Money Market Funds">Money Market Funds</option>
+        <option value="Securities &amp; Commodities">Securities &amp; Commodities</option>
+        <option value="Cryptocurrency">Cryptocurrency</option>
+      </select>
+      <select id="statusFilter">
+        <option value="">All Statuses</option>
+        <option value="active">Active</option>
+        <option value="pending">Pending</option>
+        <option value="sold">Sold</option>
+      </select>
+    </div>
+
+    <div class="table-wrap">
+      <table id="assetsTable">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Category</th>
+            <th>Subcategory</th>
+            <th>Value (USD)</th>
+            <th>Quantity</th>
+            <th>Custodian</th>
+            <th>Status</th>
+            <th>Acquired</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="assetsBody">
+          <tr><td colspan="9" class="empty">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <!-- Modal -->
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <h2 id="modalTitle">Add Asset</h2>
+      <form id="assetForm" novalidate>
+        <input type="hidden" id="assetId">
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="f_asset_name">Asset Name <span class="req">*</span></label>
+            <input type="text" id="f_asset_name" name="asset_name" required>
+          </div>
+          <div class="form-group">
+            <label for="f_category">Category <span class="req">*</span></label>
+            <select id="f_category" name="category" required>
+              <option value="">Select…</option>
+              <option value="Proprietary IP">Proprietary IP</option>
+              <option value="Computer Resources">Computer Resources</option>
+              <option value="Money Market Funds">Money Market Funds</option>
+              <option value="Securities &amp; Commodities">Securities &amp; Commodities</option>
+              <option value="Cryptocurrency">Cryptocurrency</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="f_subcategory">Subcategory</label>
+            <input type="text" id="f_subcategory" name="subcategory" placeholder="e.g. Patent, Algorithm, SPAXX, HBM4">
+          </div>
+          <div class="form-group">
+            <label for="f_status">Status</label>
+            <select id="f_status" name="status">
+              <option value="active">Active</option>
+              <option value="pending">Pending</option>
+              <option value="sold">Sold</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group full">
+          <label for="f_description">Description</label>
+          <textarea id="f_description" name="description" rows="2"></textarea>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="f_quantity">Quantity</label>
+            <input type="number" id="f_quantity" name="quantity" step="any">
+          </div>
+          <div class="form-group">
+            <label for="f_unit">Unit</label>
+            <input type="text" id="f_unit" name="unit" placeholder="e.g. shares, BTC, TB">
+          </div>
+          <div class="form-group">
+            <label for="f_estimated_value">Estimated Value (USD)</label>
+            <input type="number" id="f_estimated_value" name="estimated_value" step="any" min="0">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="f_acquisition_date">Acquisition Date</label>
+            <input type="date" id="f_acquisition_date" name="acquisition_date">
+          </div>
+          <div class="form-group">
+            <label for="f_custodian">Custodian / Institution</label>
+            <input type="text" id="f_custodian" name="custodian" placeholder="e.g. Fidelity, Coinbase">
+          </div>
+        </div>
+
+        <div class="form-group full">
+          <label for="f_beneficial_owner">Beneficial Owner</label>
+          <input type="text" id="f_beneficial_owner" name="beneficial_owner">
+        </div>
+
+        <div class="form-group full">
+          <label for="f_notes">Notes</label>
+          <textarea id="f_notes" name="notes" rows="2"></textarea>
+        </div>
+
+        <div id="formError" class="form-error hidden"></div>
+
+        <div class="modal-footer">
+          <button type="button" id="cancelBtn" class="btn btn-secondary">Cancel</button>
+          <button type="submit" id="saveBtn" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
