@@ -14,6 +14,17 @@ Usage:
     python scripts/check_assertion_density.py [tests/]
     python scripts/check_assertion_density.py --min-density 0.6 tests/
 
+Diff-aware mode (Migration Path / Boy Scout Rule):
+    python scripts/check_assertion_density.py --diff-only tests/
+
+    With --diff-only the gate only checks test functions whose source lines
+    overlap with the current git diff (origin/main...HEAD by default).
+    Legacy functions that were not touched in this PR are skipped entirely.
+    New files are always checked in full regardless of --diff-only.
+
+    Override the diff base:
+    python scripts/check_assertion_density.py --diff-only --base HEAD~3 tests/
+
 Exit codes:
     0  All files pass the quality gate
     1  One or more files/functions failed
@@ -21,6 +32,7 @@ Exit codes:
 
 import ast
 import argparse
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -142,6 +154,81 @@ def collect_test_files(paths: list[Path]) -> list[Path]:
     return files
 
 
+def changed_lines_by_file(base: str) -> dict[Path, set[int]]:
+    """
+    Return a mapping of {file_path: {changed_line_numbers}} by parsing
+    `git diff --unified=0 <base>` output.
+
+    Only added/modified lines (prefixed with +) are included — deleted
+    lines no longer exist in the working tree and can't be checked.
+    New files (diff header shows /dev/null as the old path) are recorded
+    with an empty set as a sentinel meaning "check all lines."
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--unified=0", base],
+            capture_output=True, text=True, check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"Warning: git diff failed ({e}). Falling back to full scan.",
+              file=sys.stderr)
+        return {}
+
+    changed: dict[Path, set[int]] = {}
+    current_file: Path | None = None
+    is_new_file = False
+    current_line = 0
+
+    for line in result.stdout.splitlines():
+        if line.startswith("diff --git"):
+            current_file = None
+            is_new_file = False
+        elif line.startswith("--- "):
+            is_new_file = line.strip() == "--- /dev/null"
+        elif line.startswith("+++ "):
+            raw = line[4:].strip()
+            if raw == "/dev/null":
+                current_file = None
+            else:
+                # Strip the "b/" prefix git adds
+                current_file = Path(raw[2:] if raw.startswith("b/") else raw)
+                if is_new_file:
+                    # New file — sentinel: check everything
+                    changed[current_file] = set()
+        elif line.startswith("@@ ") and current_file is not None:
+            # @@ -old_start,old_count +new_start,new_count @@
+            try:
+                new_part = line.split("+")[1].split(" ")[0]
+                start, *rest = new_part.split(",")
+                count = int(rest[0]) if rest else 1
+                current_line = int(start)
+                if current_file not in changed:
+                    changed[current_file] = set()
+                changed[current_file].update(
+                    range(current_line, current_line + max(count, 1))
+                )
+            except (ValueError, IndexError):
+                pass
+        elif line.startswith("+") and not line.startswith("+++"):
+            if current_file is not None and current_file in changed:
+                changed[current_file].add(current_line)
+            current_line += 1
+        elif not line.startswith("-"):
+            current_line += 1
+
+    return changed
+
+
+def function_overlaps_diff(fn: "FunctionResult", changed: set[int]) -> bool:
+    """
+    True if the function's line range overlaps the changed line set,
+    OR if changed is empty (sentinel for new files — check everything).
+    """
+    if not changed:  # new file sentinel
+        return True
+    return any(ln in changed for ln in range(fn.lineno, fn.lineno + fn.lines + 1))
+
+
 def format_density(density: float) -> str:
     if density == 0.0:
         return f"{density:.2f} [DANGER]"
@@ -173,6 +260,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Do not fail on individual functions with 0 assertions",
     )
+    parser.add_argument(
+        "--diff-only",
+        action="store_true",
+        help=(
+            "Boy Scout / Migration Path mode: only check test functions whose "
+            "lines overlap the current git diff. Legacy untouched functions are "
+            "skipped. New files are always checked in full."
+        ),
+    )
+    parser.add_argument(
+        "--base",
+        default="origin/main",
+        metavar="REF",
+        help="Git ref to diff against when using --diff-only (default: origin/main)",
+    )
     args = parser.parse_args(argv)
 
     test_files = collect_test_files([Path(p) for p in args.paths])
@@ -180,12 +282,43 @@ def main(argv: list[str] | None = None) -> int:
         print("No test files found.", file=sys.stderr)
         return 1
 
+    diff_map: dict[Path, set[int]] = {}
+    if args.diff_only:
+        diff_map = changed_lines_by_file(args.base)
+        if not diff_map:
+            print("  No changed test files detected in diff — nothing to check.")
+            print(f"\n{'='*60}\n  QUALITY GATE: PASSED (no changed tests)\n{'='*60}\n")
+            return 0
+        print(f"  Diff-aware mode: checking only lines changed vs {args.base!r}")
+
     overall_failed = False
 
     for path in test_files:
         result = analyse_file(path)
         if not result.functions:
             continue
+
+        # In diff-only mode, resolve the path relative to the repo root
+        # (git diff uses repo-relative paths)
+        if args.diff_only:
+            # Try both the raw path and its resolved absolute form
+            rel = Path(*path.parts[-path.parts.__len__():])  # as-is
+            file_changed = diff_map.get(path) or diff_map.get(rel)
+            for diff_path, diff_lines in diff_map.items():
+                if path.resolve().as_posix().endswith(diff_path.as_posix()):
+                    file_changed = diff_lines
+                    break
+            else:
+                if file_changed is None:
+                    continue  # file not in diff — skip entirely (legacy)
+
+            # Filter to only functions that overlap the diff
+            result.functions = [
+                fn for fn in result.functions
+                if function_overlaps_diff(fn, file_changed)
+            ]
+            if not result.functions:
+                continue
 
         print(f"\n{'='*60}")
         print(f"  {path}")

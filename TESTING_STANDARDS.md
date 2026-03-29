@@ -12,13 +12,29 @@ Every PR to `main` must pass all three checks:
 |---|---|---|---|
 | Workflow lint | `actionlint` | — | Invalid YAML syntax, deprecated commands |
 | Branch coverage | `pytest --cov` | 80% minimum | Coverage drop below floor |
-| Assertion density | `scripts/check_assertion_density.py` | 0.08 minimum | Any test with 0 assertions; file density below floor |
+| Assertion density | `scripts/check_assertion_density.py` | 0.5 on changed functions | Any touched function with 0 assertions; density below 0.5 on new/modified code |
 
 Run locally before pushing:
 ```bash
 pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=80
+
+# Full scan (all files)
 python scripts/check_assertion_density.py tests/
+
+# Diff-aware scan (only what your PR changed — same as CI)
+python scripts/check_assertion_density.py --diff-only tests/
 ```
+
+### Migration Path — Legacy Code
+
+The gate uses `--diff-only` in CI, which means:
+
+- **New files** — always checked in full, must hit 0.5 density immediately
+- **Modified functions** — checked at 0.5 density; you own what you touched
+- **Untouched legacy functions** — skipped entirely; no retroactive penalty
+- **Refactors that only move code** — run with `--no-fail-zero` and document in the PR if the logic genuinely has no assertions to add
+
+The Boy Scout Rule applies: leave any function you touch with at least one more meaningful assertion than it had before.
 
 ---
 

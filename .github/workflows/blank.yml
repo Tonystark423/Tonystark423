@@ -43,9 +43,8 @@ jobs:
         run: pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=80
 
       - name: Assertion Density Quality Gate
-        # Integration tests have more setup code than unit tests, so the
-        # per-function threshold is lower. The hard rules are:
-        #   1. No test function may have 0 assertions (vanity test)
-        #   2. Overall file density must stay above 0.08
-        # Use --min-density 0.5 only for pure unit test suites.
-        run: python scripts/check_assertion_density.py --min-density 0.08 tests/
+        # --diff-only: Boy Scout Rule — only checks functions touched in this PR.
+        # Legacy code that wasn't modified is skipped entirely.
+        # New files are always checked in full.
+        # --min-density 0.5: new/modified integration tests must hit the value zone.
+        run: python scripts/check_assertion_density.py --diff-only --min-density 0.5 tests/
