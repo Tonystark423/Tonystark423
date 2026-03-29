@@ -28,6 +28,24 @@ report 100% line coverage after this mutation — the mutant survives.
 This class of bug is not hypothetical. Boolean operator errors in access
 control are a recurring source of security vulnerabilities.
 
+### Truth Table: `require_auth` condition
+
+The condition has three independent boolean terms. Every row of the truth
+table must be covered by at least one assertion — otherwise a mutation to
+any operator produces a surviving mutant.
+
+| `not auth` | `username !=` | `password !=` | Expected | Covered by |
+|:---:|:---:|:---:|:---:|:---|
+| T | — | — | 401 | `test_no_auth_header_denied` |
+| F | T | — | 401 | `test_wrong_username_correct_password_denied` |
+| F | F | T | 401 | `test_correct_username_wrong_password_denied` |
+| F | F | F | 200 | `test_correct_credentials_allowed` |
+
+A test suite with only the bottom row (the happy path) achieves 100% line
+coverage but leaves three rows — and seven distinct mutants — undetected.
+`scripts/demo_surviving_mutant.py` demonstrates a mutant surviving that
+suite live, then being killed once the full table is covered.
+
 ## Decision
 
 We adopt a three-tiered quality gate enforced in CI on every PR:
