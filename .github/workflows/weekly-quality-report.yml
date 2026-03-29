@@ -1,0 +1,64 @@
+name: Weekly Quality Report
+
+on:
+  schedule:
+    - cron: '0 15 * * 5'   # Every Friday at 3:00 PM UTC
+  workflow_dispatch:         # Manual trigger for testing
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # Full history required for git log --since
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate quality report
+        id: report
+        run: |
+          python scripts/weekly_quality_report.py --days 7 --format markdown \
+            > /tmp/report.md
+          # Capture as a multiline output value
+          {
+            echo 'body<<REPORT_EOF'
+            cat /tmp/report.md
+            echo 'REPORT_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post to Slack
+        if: ${{ env.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          # Slack mrkdwn: strip markdown table pipes, keep bold and backticks
+          SLACK_TEXT=$(python3 - <<'EOF'
+          import re, sys, json, os
+          md = open("/tmp/report.md").read()
+          # Convert markdown table rows to plain lines
+          md = re.sub(r'\| :[-]+ ', '| ', md)
+          md = re.sub(r' \|$', '', md, flags=re.MULTILINE)
+          # Bold stays (**text** → *text* in Slack mrkdwn)
+          md = md.replace('**', '*')
+          payload = {"text": md}
+          print(json.dumps(payload))
+          EOF
+          )
+          curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H 'Content-type: application/json' \
+            --data "$SLACK_TEXT" \
+            "$SLACK_WEBHOOK_URL"
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-report-${{ github.run_id }}
+          path: /tmp/report.md
+          retention-days: 90
