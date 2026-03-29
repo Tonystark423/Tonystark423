@@ -163,6 +163,26 @@ class TestAccessControlMutations:
         resp = client.get("/api/assets", auth=("legitpass", "legituser"))
         assert resp.status_code == 401
 
+    def test_failed_auth_produces_no_db_side_effects(self, client):
+        """
+        The 'Silent Success' assertion: verify what did NOT happen.
+
+        A rejected request must not touch the database at all.
+        Without this test, a mutation that moves the auth check *after*
+        the DB call would pass every status-code assertion while still
+        writing data on unauthenticated requests.
+
+        Python equivalent of: expect(dbSpy).not.toHaveBeenCalled()
+        """
+        import unittest.mock as mock
+        with mock.patch.object(app_module, "get_db") as mock_get_db:
+            client.post(
+                "/api/assets",
+                json={"asset_name": "Should not persist", "category": "Cryptocurrency"},
+                # no auth
+            )
+        mock_get_db.assert_not_called()   # DB must never be reached on auth failure
+
     def test_auth_gate_applies_to_every_route(self, client):
         """
         The decorator must protect all routes, not just GET /api/assets.
