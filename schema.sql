@@ -10,9 +10,9 @@ CREATE TABLE IF NOT EXISTS assets (
                      )),
     subcategory      TEXT,
     description      TEXT,
-    quantity         REAL,
+    quantity         TEXT,   -- stored as Decimal string ("0.0001" precision) to avoid IEEE 754 drift
     unit             TEXT,
-    estimated_value  REAL,
+    estimated_value  TEXT,   -- stored as Decimal string; use DECIMAL(19,4) if migrating to PostgreSQL
     acquisition_date TEXT,
     custodian        TEXT,
     beneficial_owner TEXT,

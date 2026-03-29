@@ -64,7 +64,7 @@ function renderTable(assets) {
       <td><strong>${escHtml(a.asset_name)}</strong></td>
       <td><span class="cat-tag">${escHtml(a.category)}</span></td>
       <td>${escHtml(a.subcategory || '')}</td>
-      <td class="value-cell">${a.estimated_value != null ? '$' + Number(a.estimated_value).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'}</td>
+      <td class="value-cell">${a.estimated_value != null ? '$' + Number(a.estimated_value).toLocaleString('en-US', {minimumFractionDigits: 4, maximumFractionDigits: 4}) : '—'}</td>
       <td>${a.quantity != null ? escHtml(String(a.quantity)) + (a.unit ? ' ' + escHtml(a.unit) : '') : '—'}</td>
       <td>${escHtml(a.custodian || '—')}</td>
       <td><span class="badge badge-${escHtml(a.status)}">${escHtml(a.status)}</span></td>

@@ -4,6 +4,7 @@ import csv
 import io
 import os
 import sqlite3
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
 from dotenv import load_dotenv
@@ -26,6 +27,49 @@ COLUMNS = [
 ]
 
 WRITABLE_COLUMNS = [c for c in COLUMNS if c not in ("id", "created_at", "updated_at")]
+
+ASSET_NAME_MAX_LENGTH = 100
+
+
+def validate_fields(fields: dict) -> tuple[dict, str | None]:
+    """
+    Validate and sanitize writable asset fields.
+    Returns (sanitized_fields, error_message_or_None).
+
+    Rules:
+      1. Precision gate: estimated_value must be > 0 when provided
+      2. Quantity integrity: quantity must be > 0 when provided
+      3. Name sanitization: strip whitespace, cap at ASSET_NAME_MAX_LENGTH
+    """
+    if "estimated_value" in fields and fields["estimated_value"] is not None:
+        try:
+            # Use Decimal(str(...)) not Decimal(float) — Decimal(0.29) inherits
+            # the float representation error; Decimal("0.29") is exact.
+            val = Decimal(str(fields["estimated_value"]))
+        except InvalidOperation:
+            return fields, "estimated_value must be a number"
+        if val <= 0:
+            return fields, "estimated_value must be greater than zero"
+        # Quantize to 4 decimal places before storing — prevents drift at
+        # the boundary. Store as str so SQLite TEXT affinity preserves exact
+        # representation; the JSON response converts back via float().
+        fields["estimated_value"] = str(val.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+    if "quantity" in fields and fields["quantity"] is not None:
+        try:
+            qty = Decimal(str(fields["quantity"]))
+        except InvalidOperation:
+            return fields, "quantity must be a number"
+        if qty <= 0:
+            return fields, "quantity must be greater than zero"
+        fields["quantity"] = str(qty.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+    if "asset_name" in fields and fields["asset_name"] is not None:
+        fields["asset_name"] = str(fields["asset_name"]).strip()[:ASSET_NAME_MAX_LENGTH]
+        if not fields["asset_name"]:
+            return fields, "asset_name cannot be blank"
+
+    return fields, None
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +168,9 @@ def create_asset():
     fields = {k: data[k] for k in WRITABLE_COLUMNS if k in data}
     if "asset_name" not in fields or "category" not in fields:
         return jsonify({"error": "asset_name and category are required"}), 400
+    fields, err = validate_fields(fields)
+    if err:
+        return jsonify({"error": err}), 400
 
     cols = ", ".join(fields.keys())
     placeholders = ", ".join("?" for _ in fields)
@@ -160,6 +207,9 @@ def update_asset(asset_id):
     fields = {k: data[k] for k in WRITABLE_COLUMNS if k in data}
     if not fields:
         return jsonify({"error": "No valid fields provided"}), 400
+    fields, err = validate_fields(fields)
+    if err:
+        return jsonify({"error": err}), 400
 
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     set_clause += ", updated_at = datetime('now')"
