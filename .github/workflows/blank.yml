@@ -41,3 +41,11 @@ jobs:
 
       - name: Run tests with coverage
         run: pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=80
+
+      - name: Assertion Density Quality Gate
+        # Integration tests have more setup code than unit tests, so the
+        # per-function threshold is lower. The hard rules are:
+        #   1. No test function may have 0 assertions (vanity test)
+        #   2. Overall file density must stay above 0.08
+        # Use --min-density 0.5 only for pure unit test suites.
+        run: python scripts/check_assertion_density.py --min-density 0.08 tests/
