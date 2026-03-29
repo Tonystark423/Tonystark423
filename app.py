@@ -128,10 +128,13 @@ def create_asset():
     cols = ", ".join(fields.keys())
     placeholders = ", ".join("?" for _ in fields)
     db = get_db()
-    cur = db.execute(
-        f"INSERT INTO assets ({cols}) VALUES ({placeholders})",
-        list(fields.values()),
-    )
+    try:
+        cur = db.execute(
+            f"INSERT INTO assets ({cols}) VALUES ({placeholders})",
+            list(fields.values()),
+        )
+    except sqlite3.IntegrityError as e:
+        return jsonify({"error": str(e)}), 400
     db.commit()
     row = db.execute("SELECT * FROM assets WHERE id = ?", (cur.lastrowid,)).fetchone()
     return jsonify(dict(row)), 201
