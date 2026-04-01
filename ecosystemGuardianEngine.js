@@ -1,0 +1,50 @@
+/**
+ * ECOSYSTEM GUARDIAN ENGINE v1.0
+ * Manages Scaling, Synthetics, and VIX Alpha Recycling.
+ */
+
+function updateEngineStatus(aum, vix, oil, gex) {
+  const status = {
+    allocation: "",
+    action: "",
+    riskLevel: ""
+  };
+
+  // 1. Scaling Logic: Physical vs Synthetic
+  if (aum >= 1000000000) {
+    status.allocation = "70% Synthetic (TRS) / 30% Physical";
+  } else if (aum >= 100000000) {
+    status.allocation = "30% Synthetic / 70% Physical";
+  } else {
+    status.allocation = "100% Physical (Direct Equity)";
+  }
+
+  // 2. The Shield Trigger (VIX & Gamma)
+  if (vix > 27) {
+    // Black Swan threshold: stop all recycling, maximize shield at full notional
+    status.action = "BLACK SWAN: STOP RECYCLING. MAXIMIZE SHIELD.";
+    status.riskLevel = "BLACK SWAN";
+  } else if (vix > 25 && gex < 0) {
+    // Extreme vol + negative gamma: dealers are short gamma, accelerating moves
+    status.action = "SHIELD ACTIVE: Do Not Sell VIX. Hold 493 Floor.";
+    status.riskLevel = "CRITICAL";
+  } else if (vix > 25 && gex >= 0) {
+    // Extreme vol but positive gamma: dealers absorb moves, reduce synthetic exposure
+    status.action = "HEDGE: Trim Synthetic Legs. Await Gamma Flip Confirmation.";
+    status.riskLevel = "HIGH";
+  } else if (vix > 24 && oil > 115) {
+    // Elevated vol + oil shock: recycle VIX premium into VST/GEV
+    status.action = "RECYCLE: Move VIX Profit -> VST / GEV.";
+    status.riskLevel = "ELEVATED";
+  } else if (vix > 20) {
+    // Early vol expansion: watch for regime change, no action yet
+    status.action = "WATCH: Monitor VIX Expansion. Prepare Shield Parameters.";
+    status.riskLevel = "WARNING";
+  } else {
+    // Calm market: monitor 493 decoupling from Mag 7
+    status.action = "SYMBIOSIS: Monitor 493 Decoupling.";
+    status.riskLevel = "NORMAL";
+  }
+
+  return status;
+}
