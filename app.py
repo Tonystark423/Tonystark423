@@ -349,6 +349,70 @@ def report_expenses():
                     headers={"Content-Disposition": "inline; filename=expense_report.png"})
 
 
+@app.route("/api/export/excel", methods=["GET"])
+@require_auth
+def export_excel():
+    """Download a multi-sheet Excel workbook of the full ledger.
+
+    Sheets:
+      Raw Data       — every asset row
+      Monthly Pivot  — Income / Expense / Net by calendar month (.unstack())
+      Budget Check   — actual spend vs. limits per category
+      Category Rollup— total spend per keyword category
+
+    Query params:
+      after   ISO date — restrict rows included
+      before  ISO date — restrict rows included
+    """
+    try:
+        from ledger_processor import categorize_transaction, export_excel as _export_excel, BUDGET_LIMITS
+    except ImportError:
+        return jsonify({"error": "pandas/openpyxl not installed"}), 503
+
+    import tempfile
+    import pandas as _pd
+
+    db = get_db()
+    sql = "SELECT * FROM assets WHERE 1=1"
+    params: list = []
+
+    after  = request.args.get("after", "")
+    before = request.args.get("before", "")
+    if after:
+        sql += " AND acquisition_date >= ?"
+        params.append(after)
+    if before:
+        sql += " AND acquisition_date <= ?"
+        params.append(before)
+
+    rows = db.execute(sql, params).fetchall()
+    if not rows:
+        return jsonify({"error": "No data in ledger"}), 404
+
+    df = _pd.DataFrame([dict(r) for r in rows])
+    df["Amount"]   = _pd.to_numeric(df["estimated_value"], errors="coerce").fillna(0.0)
+    df["Type"]     = df["subcategory"].fillna("").apply(
+        lambda s: "Expense" if any(k in s.lower() for k in ("debit", "expense")) else "Income"
+    )
+    df["Category"] = df["description"].fillna("").apply(categorize_transaction)
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        _export_excel(df, output_path=tmp_path, budget_limits=BUDGET_LIMITS)
+        with open(tmp_path, "rb") as fh:
+            xlsx_bytes = fh.read()
+    finally:
+        os.unlink(tmp_path)
+
+    return Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=stark_financial_report.xlsx"},
+    )
+
+
 @app.route("/api/reports/budget", methods=["GET"])
 @require_auth
 def report_budget():

@@ -563,6 +563,112 @@ def create_visuals(
 
 
 # ---------------------------------------------------------------------------
+# Monthly pivot  (Gemini next-step: .unstack() income vs expense by month)
+# ---------------------------------------------------------------------------
+
+def build_monthly_pivot(
+    df: pd.DataFrame,
+    date_col: str = "acquisition_date",
+    type_col: str = "Type",
+    amount_col: str = "Amount",
+) -> pd.DataFrame:
+    """Pivot transactions into a monthly Income / Expense summary table.
+
+    Groups rows by calendar month (YYYY-MM) and transaction type, sums the
+    absolute amounts, then calls .unstack() so Income and Expense become
+    side-by-side columns — exactly as described in the Gemini suggestion.
+
+    Returns a DataFrame with:
+      index   : period strings ("2024-01", "2024-02", ...)
+      columns : MultiIndex or flat ["Expense", "Income", "Net"]
+
+    Rows with unparseable dates are excluded (NaT after coercion).
+    """
+    work = df.copy()
+    work["_period"] = pd.to_datetime(work[date_col], errors="coerce").dt.to_period("M").astype(str)
+    work = work.dropna(subset=["_period"])
+    work = work[work["_period"] != "NaT"]
+
+    pivot = (
+        work.groupby(["_period", type_col])[amount_col]
+        .sum()
+        .abs()
+        .unstack(fill_value=0.0)          # Income / Expense become columns
+    )
+
+    # Ensure both columns exist even if one type is absent in the data
+    for col in ("Income", "Expense"):
+        if col not in pivot.columns:
+            pivot[col] = 0.0
+
+    pivot["Net"] = pivot.get("Income", 0.0) - pivot.get("Expense", 0.0)
+    pivot.index.name = "Period"
+    return pivot[["Income", "Expense", "Net"]].sort_index()
+
+
+# ---------------------------------------------------------------------------
+# Multi-sheet Excel export  (Gemini next-step: pd.ExcelWriter)
+# ---------------------------------------------------------------------------
+
+def export_excel(
+    df: pd.DataFrame,
+    output_path: str = "stark_financial_report.xlsx",
+    budget_limits: dict[str, float] | None = None,
+) -> str:
+    """Write a multi-sheet Excel workbook:
+
+      Sheet 1 — Raw Data      : full cleaned DataFrame
+      Sheet 2 — Monthly Pivot : Income / Expense / Net by month (.unstack())
+      Sheet 3 — Budget Check  : actual vs. limit per spend category
+      Sheet 4 — Category Roll : total spend per keyword category
+
+    Args:
+        df: cleaned DataFrame with Type, Category, Amount, acquisition_date.
+        output_path: destination .xlsx path.
+        budget_limits: override BUDGET_LIMITS; None uses module default.
+
+    Returns:
+        Absolute path of the saved workbook.
+    """
+    limits = budget_limits if budget_limits is not None else BUDGET_LIMITS
+
+    monthly = build_monthly_pivot(df)
+
+    budget_rows = check_budgets(
+        df, custom_limits=limits,
+        type_col="Type", category_col="Category", amount_col="Amount",
+    )
+    budget_df = pd.DataFrame(budget_rows)
+
+    category_roll = (
+        df[df["Type"].str.lower().str.contains("expense|debit", na=False)]
+        .groupby("Category")["Amount"]
+        .sum()
+        .abs()
+        .sort_values(ascending=False)
+        .reset_index()
+        .rename(columns={"Amount": "Total Expense (USD)"})
+    )
+
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        df.to_excel(writer,        sheet_name="Raw Data",      index=False)
+        monthly.to_excel(writer,   sheet_name="Monthly Pivot")
+        budget_df.to_excel(writer, sheet_name="Budget Check",  index=False)
+        category_roll.to_excel(writer, sheet_name="Category Rollup", index=False)
+
+        # Auto-fit column widths on every sheet
+        for sheet in writer.sheets.values():
+            for col_cells in sheet.columns:
+                max_len = max(
+                    (len(str(c.value)) for c in col_cells if c.value is not None),
+                    default=10,
+                )
+                sheet.column_dimensions[col_cells[0].column_letter].width = min(max_len + 2, 50)
+
+    return os.path.abspath(output_path)
+
+
+# ---------------------------------------------------------------------------
 # CLI convenience
 # ---------------------------------------------------------------------------
 
