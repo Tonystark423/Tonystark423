@@ -361,6 +361,90 @@ def _build_fields(row: pd.Series, default_owner: str, default_custodian: str) ->
 
 
 # ---------------------------------------------------------------------------
+# Categorization
+# ---------------------------------------------------------------------------
+
+#: Keyword → spend category map (evaluated in order; first match wins)
+_CATEGORY_RULES: list[tuple[list[str], str]] = [
+    (["salary", "payroll", "wage"],                          "Payroll"),
+    (["rent", "lease", "office"],                            "Facilities"),
+    (["cloud", "aws", "azure", "gcp", "software", "saas",
+      "license", "subscription"],                            "Technology"),
+    (["interest", "dividend", "sale", "payment from",
+      "proceeds", "distribution"],                           "Revenue"),
+    (["tax", "irs", "nj division"],                          "Tax"),
+    (["legal", "counsel", "attorney", "compliance"],         "Legal & Compliance"),
+    (["travel", "flight", "hotel", "lodging"],               "Travel"),
+]
+_CATEGORY_DEFAULT = "General Operations"
+
+
+def categorize_transaction(description: str) -> str:
+    """Keyword-based categorization of a transaction description.
+
+    Evaluated in _CATEGORY_RULES order; first keyword match wins.
+    Returns _CATEGORY_DEFAULT when no rule matches.
+    """
+    desc = str(description).lower()
+    for keywords, label in _CATEGORY_RULES:
+        if any(kw in desc for kw in keywords):
+            return label
+    return _CATEGORY_DEFAULT
+
+
+# ---------------------------------------------------------------------------
+# Visualization
+# ---------------------------------------------------------------------------
+
+def create_visuals(
+    df: pd.DataFrame,
+    output_path: str = "stark_expense_chart.png",
+    type_col: str = "Type",
+    category_col: str = "Category",
+    amount_col: str = "Amount",
+) -> str:
+    """Generate a bar chart of expenses by category and save as PNG.
+
+    Args:
+        df: DataFrame with at minimum Type, Category, and Amount columns.
+        output_path: where to write the PNG file.
+        type_col / category_col / amount_col: column names (default match
+            process_stark_ledger() output after title-casing).
+
+    Returns:
+        Absolute path of the saved chart file.
+    """
+    import matplotlib
+    matplotlib.use("Agg")  # non-interactive backend — safe for servers
+    import matplotlib.pyplot as plt
+
+    expenses = df[df[type_col].str.lower().str.contains("expense|debit", na=False)]
+    if expenses.empty:
+        raise ValueError("No expense rows found — check the Type column values.")
+
+    category_totals = (
+        expenses.groupby(category_col)[amount_col]
+        .sum()
+        .abs()
+        .sort_values(ascending=False)
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    category_totals.plot(kind="bar", color="steelblue", ax=ax)
+    ax.set_title("Stark Financial Holdings: Expenses by Category", fontsize=14, fontweight="bold")
+    ax.set_ylabel("Total Amount (USD)")
+    ax.set_xlabel("Category")
+    ax.tick_params(axis="x", rotation=45)
+    ax.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda x, _: f"${x:,.2f}")
+    )
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    return os.path.abspath(output_path)
+
+
+# ---------------------------------------------------------------------------
 # CLI convenience
 # ---------------------------------------------------------------------------
 

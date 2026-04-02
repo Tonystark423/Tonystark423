@@ -288,6 +288,65 @@ def import_csv():
     return jsonify(result), status_code
 
 
+@app.route("/api/reports/expenses", methods=["GET"])
+@require_auth
+def report_expenses():
+    """Return a PNG bar chart of expenses by spend category.
+
+    Query params:
+      after   ISO date — only rows with acquisition_date >= after
+      before  ISO date — only rows with acquisition_date <= before
+
+    The chart groups assets where subcategory contains 'debit' or 'expense'
+    and applies keyword categorization to the description field.
+    """
+    try:
+        from ledger_processor import categorize_transaction, create_visuals
+    except ImportError:
+        return jsonify({"error": "pandas/matplotlib not installed"}), 503
+
+    db = get_db()
+    sql = "SELECT description, estimated_value, subcategory, acquisition_date FROM assets WHERE 1=1"
+    params: list = []
+
+    after  = request.args.get("after", "")
+    before = request.args.get("before", "")
+    if after:
+        sql += " AND acquisition_date >= ?"
+        params.append(after)
+    if before:
+        sql += " AND acquisition_date <= ?"
+        params.append(before)
+
+    rows = db.execute(sql, params).fetchall()
+    if not rows:
+        return jsonify({"error": "No data in ledger"}), 404
+
+    import tempfile
+    import pandas as _pd
+
+    df = _pd.DataFrame([dict(r) for r in rows])
+    df["Amount"]   = _pd.to_numeric(df["estimated_value"], errors="coerce").fillna(0.0)
+    df["Type"]     = df["subcategory"].fillna("").apply(
+        lambda s: "Expense" if any(k in s.lower() for k in ("debit", "expense")) else "Income"
+    )
+    df["Category"] = df["description"].fillna("").apply(categorize_transaction)
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        create_visuals(df, output_path=tmp_path,
+                       type_col="Type", category_col="Category", amount_col="Amount")
+        with open(tmp_path, "rb") as fh:
+            png_bytes = fh.read()
+    finally:
+        os.unlink(tmp_path)
+
+    return Response(png_bytes, mimetype="image/png",
+                    headers={"Content-Disposition": "inline; filename=expense_report.png"})
+
+
 @app.route("/api/sync/starkbank", methods=["POST"])
 @require_auth
 def sync_starkbank():
