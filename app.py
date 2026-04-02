@@ -252,5 +252,39 @@ def export_csv():
     )
 
 
+@app.route("/api/sync/starkbank", methods=["POST"])
+@require_auth
+def sync_starkbank():
+    """Pull live transactions from Stark Bank and upsert into the ledger.
+
+    Optional JSON body:
+      { "limit": 50, "after": "2024-01-01", "before": "2024-12-31" }
+
+    Returns:
+      { "inserted": N, "skipped": N }
+    """
+    missing = [v for v in ("STARKBANK_ENVIRONMENT", "STARKBANK_PROJECT_ID", "STARKBANK_PRIVATE_KEY")
+               if not os.getenv(v)]
+    if missing:
+        return jsonify({"error": f"Missing env vars: {', '.join(missing)}"}), 503
+
+    try:
+        from starkbank_sync import sync_transactions  # lazy import — optional dependency
+    except ImportError:
+        return jsonify({"error": "starkbank package not installed. Run: pip install starkbank"}), 503
+
+    data    = request.get_json(silent=True) or {}
+    limit   = min(int(data.get("limit", 100)), 1000)
+    after   = data.get("after")
+    before  = data.get("before")
+
+    try:
+        inserted, skipped = sync_transactions(get_db(), limit=limit, after=after, before=before)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+
+    return jsonify({"inserted": inserted, "skipped": skipped})
+
+
 if __name__ == "__main__":
     app.run(debug=False)
