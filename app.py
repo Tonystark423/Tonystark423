@@ -252,6 +252,42 @@ def export_csv():
     )
 
 
+@app.route("/api/import/csv", methods=["POST"])
+@require_auth
+def import_csv():
+    """Upload a CSV file and upsert rows into the ledger.
+
+    Multipart form field: file (the CSV)
+    Optional query params:
+      beneficial_owner  stamped on rows with no owner column
+      custodian         stamped on rows with no custodian column
+
+    Returns:
+      { "processed": N, "inserted": N, "skipped": N, "errors": [...] }
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "No file field in request"}), 400
+
+    upload = request.files["file"]
+    if not upload.filename or not upload.filename.lower().endswith(".csv"):
+        return jsonify({"error": "File must be a .csv"}), 400
+
+    try:
+        from ledger_processor import process_csv  # lazy import — optional dependency
+    except ImportError:
+        return jsonify({"error": "pandas not installed. Run: pip install pandas"}), 503
+
+    owner    = request.args.get("beneficial_owner", os.getenv("LEDGER_BENEFICIAL_OWNER", ""))
+    custodian = request.args.get("custodian", "")
+
+    stream = upload.stream
+    result = process_csv(stream, get_db(), default_beneficial_owner=owner,
+                         default_custodian=custodian)
+
+    status_code = 200 if not result["errors"] else 207  # 207 Multi-Status = partial success
+    return jsonify(result), status_code
+
+
 @app.route("/api/sync/starkbank", methods=["POST"])
 @require_auth
 def sync_starkbank():

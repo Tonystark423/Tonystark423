@@ -1,0 +1,387 @@
+"""Stark Financial Holdings — CSV Ledger Processor.
+
+Reads a CSV export (brokerage, bank, or manual), cleans it, maps columns
+to the assets schema, applies Decimal precision, and upserts into SQLite.
+
+Supported column aliases (case-insensitive, whitespace-stripped):
+  asset_name       : asset_name, name, description, asset, symbol, ticker
+  category         : category, asset_class, type, asset_type
+  subcategory      : subcategory, sub_category, subtype
+  estimated_value  : estimated_value, amount, balance, credit, value,
+                     market_value, current_value, price
+  quantity         : quantity, shares, units, qty
+  unit             : unit, currency, denomination
+  acquisition_date : acquisition_date, date, trade_date, purchase_date
+  custodian        : custodian, broker, institution, account
+  beneficial_owner : beneficial_owner, owner, holder
+  status           : status, state
+  notes            : notes, memo, remarks, comment
+
+Usage:
+  from ledger_processor import process_csv
+  result = process_csv("stark_holdings_ledger.csv", db_conn)
+  print(result)   # {"processed": 42, "inserted": 38, "skipped": 4, "errors": [...]}
+"""
+
+from __future__ import annotations
+
+import io
+import os
+import sqlite3
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import Union
+
+import pandas as pd
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+VALID_CATEGORIES = {
+    "Proprietary IP",
+    "Computer Resources",
+    "Money Market Funds",
+    "Securities & Commodities",
+    "Cryptocurrency",
+}
+
+VALID_STATUSES = {"active", "sold", "pending"}
+
+ASSET_NAME_MAX = 100
+
+# Maps normalised CSV column names → ledger field names
+_ALIASES: dict[str, str] = {
+    "asset_name":       "asset_name",
+    "name":             "asset_name",
+    "description":      "asset_name",
+    "asset":            "asset_name",
+    "symbol":           "asset_name",
+    "ticker":           "asset_name",
+
+    "category":         "category",
+    "asset_class":      "category",
+    "type":             "category",
+    "asset_type":       "category",
+
+    "subcategory":      "subcategory",
+    "sub_category":     "subcategory",
+    "subtype":          "subcategory",
+
+    "estimated_value":  "estimated_value",
+    "amount":           "estimated_value",
+    "balance":          "estimated_value",
+    "credit":           "estimated_value",
+    "value":            "estimated_value",
+    "market_value":     "estimated_value",
+    "current_value":    "estimated_value",
+    "price":            "estimated_value",
+
+    "quantity":         "quantity",
+    "shares":           "quantity",
+    "units":            "quantity",
+    "qty":              "quantity",
+
+    "unit":             "unit",
+    "currency":         "unit",
+    "denomination":     "unit",
+
+    "acquisition_date": "acquisition_date",
+    "date":             "acquisition_date",
+    "trade_date":       "acquisition_date",
+    "purchase_date":    "acquisition_date",
+
+    "custodian":        "custodian",
+    "broker":           "custodian",
+    "institution":      "custodian",
+    "account":          "custodian",
+
+    "beneficial_owner": "beneficial_owner",
+    "owner":            "beneficial_owner",
+    "holder":           "beneficial_owner",
+
+    "status":           "status",
+    "state":            "status",
+
+    "notes":            "notes",
+    "memo":             "notes",
+    "remarks":          "notes",
+    "comment":          "notes",
+}
+
+_CURRENCY_COLS = {"estimated_value", "amount", "balance", "credit", "value",
+                  "market_value", "current_value", "price"}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _normalise_col(col: str) -> str:
+    return col.strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _clean_currency(series: pd.Series) -> pd.Series:
+    """Strip $, commas, parentheses; convert to numeric."""
+    return pd.to_numeric(
+        series.astype(str).str.replace(r"[\$,\(\)\s]", "", regex=True),
+        errors="coerce",
+    )
+
+
+def _to_decimal_str(raw) -> str | None:
+    """Convert a raw value to 4dp Decimal string, or None if invalid/zero."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    try:
+        d = Decimal(str(raw))
+    except InvalidOperation:
+        return None
+    if d <= 0:
+        return None
+    return str(d.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+
+def _map_category(raw: str) -> str:
+    """Best-effort match to allowed category values; falls back to 'Securities & Commodities'."""
+    if not raw or str(raw).strip().lower() in ("nan", "none", ""):
+        return "Securities & Commodities"
+    cleaned = str(raw).strip()
+    # Exact match first
+    if cleaned in VALID_CATEGORIES:
+        return cleaned
+    # Case-insensitive
+    lower = cleaned.lower()
+    for v in VALID_CATEGORIES:
+        if v.lower() == lower:
+            return v
+    # Substring heuristics
+    if any(k in lower for k in ("ip", "patent", "algorithm", "software", "license")):
+        return "Proprietary IP"
+    if any(k in lower for k in ("gpu", "cpu", "server", "compute", "memory", "hbm")):
+        return "Computer Resources"
+    if any(k in lower for k in ("money market", "mmf", "spaxx", "fidelity", "fund")):
+        return "Money Market Funds"
+    if any(k in lower for k in ("crypto", "bitcoin", "btc", "eth", "coin", "token")):
+        return "Cryptocurrency"
+    return "Securities & Commodities"
+
+
+def _map_status(raw: str) -> str:
+    if not raw or str(raw).strip().lower() in ("nan", "none", ""):
+        return "active"
+    cleaned = str(raw).strip().lower()
+    if cleaned in VALID_STATUSES:
+        return cleaned
+    if any(k in cleaned for k in ("sell", "sold", "closed", "exit")):
+        return "sold"
+    if any(k in cleaned for k in ("pend", "wait", "settl")):
+        return "pending"
+    return "active"
+
+
+# ---------------------------------------------------------------------------
+# Core processor
+# ---------------------------------------------------------------------------
+
+def process_csv(
+    source: Union[str, io.IOBase],
+    db: sqlite3.Connection,
+    default_beneficial_owner: str = "",
+    default_custodian: str = "",
+) -> dict:
+    """Load, clean, and upsert a CSV into the assets table.
+
+    Args:
+        source: file path string or file-like object.
+        db: open sqlite3.Connection (caller manages lifecycle).
+        default_beneficial_owner: stamped on rows that have no owner column.
+        default_custodian: stamped on rows that have no custodian column.
+
+    Returns:
+        {"processed": N, "inserted": N, "skipped": N, "errors": [...]}
+    """
+    # 1. Load
+    if isinstance(source, str):
+        if not os.path.exists(source):
+            return {"processed": 0, "inserted": 0, "skipped": 0,
+                    "errors": [f"File not found: {source}"]}
+        df = pd.read_csv(source, encoding="utf-8")
+    else:
+        df = pd.read_csv(source, encoding="utf-8")
+
+    if df.empty:
+        return {"processed": 0, "inserted": 0, "skipped": 0, "errors": ["CSV is empty"]}
+
+    # 2. Normalise column names
+    df.columns = [_normalise_col(c) for c in df.columns]
+
+    # 3. Clean currency columns before alias mapping
+    for col in df.columns:
+        if col in _CURRENCY_COLS:
+            df[col] = _clean_currency(df[col])
+
+    # 4. Clean date columns
+    for col in df.columns:
+        if "date" in col:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+
+    # 5. Rename to ledger field names (first alias wins per target)
+    rename_map: dict[str, str] = {}
+    seen_targets: set[str] = set()
+    for raw_col in df.columns:
+        target = _ALIASES.get(raw_col)
+        if target and target not in seen_targets:
+            rename_map[raw_col] = target
+            seen_targets.add(target)
+    df = df.rename(columns=rename_map)
+
+    # 6. Drop rows with no usable asset_name
+    if "asset_name" not in df.columns:
+        return {"processed": 0, "inserted": 0, "skipped": 0,
+                "errors": ["No column maps to asset_name. Provide 'name', 'symbol', or 'asset_name'."]}
+
+    df = df.dropna(subset=["asset_name"])
+    df = df[df["asset_name"].astype(str).str.strip() != ""]
+
+    # 7. Derive Transaction Type for rows with Amount (mirrors user's original logic)
+    if "estimated_value" in df.columns and "subcategory" not in df.columns:
+        df["subcategory"] = df["estimated_value"].apply(
+            lambda x: "Credit/Income" if (not pd.isna(x) and x > 0) else "Debit/Expense"
+        )
+
+    # 8. Upsert loop
+    inserted = 0
+    skipped  = 0
+    errors: list[str] = []
+
+    for idx, row in df.iterrows():
+        try:
+            fields = _build_fields(row, default_beneficial_owner, default_custodian)
+        except Exception as exc:
+            errors.append(f"Row {idx}: build error — {exc}")
+            skipped += 1
+            continue
+
+        # Dedup: asset_name + acquisition_date + estimated_value
+        existing = db.execute(
+            """SELECT id FROM assets
+               WHERE asset_name = ?
+                 AND COALESCE(acquisition_date,'') = COALESCE(?,'')
+                 AND COALESCE(estimated_value,'') = COALESCE(?,'')""",
+            (fields["asset_name"], fields.get("acquisition_date"), fields.get("estimated_value")),
+        ).fetchone()
+
+        if existing:
+            skipped += 1
+            continue
+
+        cols         = ", ".join(fields.keys())
+        placeholders = ", ".join("?" for _ in fields)
+        try:
+            db.execute(
+                f"INSERT INTO assets ({cols}) VALUES ({placeholders})",
+                list(fields.values()),
+            )
+            inserted += 1
+        except sqlite3.IntegrityError as exc:
+            errors.append(f"Row {idx}: integrity error — {exc}")
+            skipped += 1
+
+    db.commit()
+
+    processed = inserted + skipped
+    return {"processed": processed, "inserted": inserted, "skipped": skipped, "errors": errors}
+
+
+def _build_fields(row: pd.Series, default_owner: str, default_custodian: str) -> dict:
+    fields: dict = {}
+
+    # asset_name — required, max 100 chars
+    fields["asset_name"] = str(row["asset_name"]).strip()[:ASSET_NAME_MAX]
+
+    # category — validate/map
+    raw_cat = row.get("category", "")
+    fields["category"] = _map_category(raw_cat)
+
+    # subcategory
+    raw_sub = row.get("subcategory", "")
+    if raw_sub and str(raw_sub).strip().lower() not in ("nan", "none", ""):
+        fields["subcategory"] = str(raw_sub).strip()
+
+    # description
+    raw_desc = row.get("description", "")
+    if raw_desc and str(raw_desc).strip().lower() not in ("nan", "none", ""):
+        fields["description"] = str(raw_desc).strip()
+
+    # estimated_value — Decimal precision
+    raw_val = row.get("estimated_value")
+    decimal_val = _to_decimal_str(raw_val)
+    if decimal_val is not None:
+        fields["estimated_value"] = decimal_val
+
+    # quantity
+    raw_qty = row.get("quantity")
+    decimal_qty = _to_decimal_str(raw_qty)
+    if decimal_qty is not None:
+        fields["quantity"] = decimal_qty
+
+    # unit
+    raw_unit = row.get("unit", "")
+    if raw_unit and str(raw_unit).strip().lower() not in ("nan", "none", ""):
+        fields["unit"] = str(raw_unit).strip()
+
+    # acquisition_date
+    raw_date = row.get("acquisition_date")
+    if raw_date is not None and not (isinstance(raw_date, float) and pd.isna(raw_date)):
+        try:
+            fields["acquisition_date"] = pd.Timestamp(raw_date).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    # custodian
+    raw_cust = row.get("custodian", "") or default_custodian
+    if raw_cust and str(raw_cust).strip().lower() not in ("nan", "none", ""):
+        fields["custodian"] = str(raw_cust).strip()
+
+    # beneficial_owner
+    raw_owner = row.get("beneficial_owner", "") or default_owner
+    if raw_owner and str(raw_owner).strip().lower() not in ("nan", "none", ""):
+        fields["beneficial_owner"] = str(raw_owner).strip()
+
+    # status
+    raw_status = row.get("status", "")
+    fields["status"] = _map_status(raw_status)
+
+    # notes
+    raw_notes = row.get("notes", "")
+    if raw_notes and str(raw_notes).strip().lower() not in ("nan", "none", ""):
+        fields["notes"] = str(raw_notes).strip()
+
+    return fields
+
+
+# ---------------------------------------------------------------------------
+# CLI convenience
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import sys
+    import json
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    if len(sys.argv) < 2:
+        print("Usage: python ledger_processor.py <path/to/file.csv>")
+        sys.exit(1)
+
+    csv_path = sys.argv[1]
+    db_path  = os.getenv("DB_PATH", "ledger.db")
+    owner    = os.getenv("LEDGER_BENEFICIAL_OWNER", "")
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    result = process_csv(csv_path, conn, default_beneficial_owner=owner)
+    conn.close()
+
+    print(json.dumps(result, indent=2))
