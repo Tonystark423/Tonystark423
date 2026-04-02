@@ -335,9 +335,11 @@ def report_expenses():
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp_path = tmp.name
 
+    from ledger_processor import BUDGET_LIMITS
     try:
         create_visuals(df, output_path=tmp_path,
-                       type_col="Type", category_col="Category", amount_col="Amount")
+                       type_col="Type", category_col="Category", amount_col="Amount",
+                       budget_limits=BUDGET_LIMITS)
         with open(tmp_path, "rb") as fh:
             png_bytes = fh.read()
     finally:
@@ -345,6 +347,65 @@ def report_expenses():
 
     return Response(png_bytes, mimetype="image/png",
                     headers={"Content-Disposition": "inline; filename=expense_report.png"})
+
+
+@app.route("/api/reports/budget", methods=["GET"])
+@require_auth
+def report_budget():
+    """Return a JSON budget check — actual spend vs. limits per category.
+
+    Query params:
+      after   ISO date — restrict to rows with acquisition_date >= after
+      before  ISO date — restrict to rows with acquisition_date <= before
+
+    Response (200):
+      {
+        "summary": {"over": 1, "warning": 0, "ok": 6},
+        "items": [
+          {"category": "Technology", "limit": 5000.0, "actual": 6200.0,
+           "variance": -1200.0, "status": "over"},
+          ...
+        ]
+      }
+    """
+    try:
+        from ledger_processor import categorize_transaction, check_budgets
+    except ImportError:
+        return jsonify({"error": "pandas not installed"}), 503
+
+    import pandas as _pd
+
+    db = get_db()
+    sql = "SELECT description, estimated_value, subcategory FROM assets WHERE 1=1"
+    params: list = []
+
+    after  = request.args.get("after", "")
+    before = request.args.get("before", "")
+    if after:
+        sql += " AND acquisition_date >= ?"
+        params.append(after)
+    if before:
+        sql += " AND acquisition_date <= ?"
+        params.append(before)
+
+    rows = db.execute(sql, params).fetchall()
+    if not rows:
+        return jsonify({"summary": {"over": 0, "warning": 0, "ok": 0}, "items": []})
+
+    df = _pd.DataFrame([dict(r) for r in rows])
+    df["Amount"]   = _pd.to_numeric(df["estimated_value"], errors="coerce").fillna(0.0)
+    df["Type"]     = df["subcategory"].fillna("").apply(
+        lambda s: "Expense" if any(k in s.lower() for k in ("debit", "expense")) else "Income"
+    )
+    df["Category"] = df["description"].fillna("").apply(categorize_transaction)
+
+    items = check_budgets(df, type_col="Type", category_col="Category", amount_col="Amount")
+    summary = {
+        "over":    sum(1 for i in items if i["status"] == "over"),
+        "warning": sum(1 for i in items if i["status"] == "warning"),
+        "ok":      sum(1 for i in items if i["status"] == "ok"),
+    }
+    return jsonify({"summary": summary, "items": items})
 
 
 @app.route("/api/sync/starkbank", methods=["POST"])

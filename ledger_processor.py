@@ -49,6 +49,23 @@ VALID_STATUSES = {"active", "sold", "pending"}
 
 ASSET_NAME_MAX = 100
 
+# ---------------------------------------------------------------------------
+# Budget limits (USD, per spend category)
+# Override at runtime by mutating this dict or passing custom_limits to
+# check_budgets(). Stored here so the API endpoint and CLI share one source.
+# ---------------------------------------------------------------------------
+
+BUDGET_LIMITS: dict[str, float] = {
+    "Payroll":            50_000.00,
+    "Facilities":         10_000.00,
+    "Technology":          5_000.00,
+    "Tax":                 8_000.00,
+    "Legal & Compliance":  3_000.00,
+    "Travel":              2_500.00,
+    "General Operations":  2_000.00,
+    # Revenue is income — no spending cap
+}
+
 # Maps normalised CSV column names → ledger field names
 _ALIASES: dict[str, str] = {
     "asset_name":       "asset_name",
@@ -393,6 +410,62 @@ def categorize_transaction(description: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Budget checking
+# ---------------------------------------------------------------------------
+
+def check_budgets(
+    df: pd.DataFrame,
+    custom_limits: dict[str, float] | None = None,
+    type_col: str = "Type",
+    category_col: str = "Category",
+    amount_col: str = "Amount",
+) -> list[dict]:
+    """Compare actual spend vs. budget limits per category.
+
+    Args:
+        df: DataFrame with Type, Category, Amount columns.
+        custom_limits: override BUDGET_LIMITS for this call only.
+        type_col / category_col / amount_col: column name overrides.
+
+    Returns:
+        List of dicts, one per budgeted category, e.g.:
+        [
+          {"category": "Technology", "limit": 5000.0, "actual": 6200.0,
+           "variance": -1200.0, "status": "over"},
+          {"category": "Payroll",    "limit": 50000.0, "actual": 32000.0,
+           "variance": 18000.0, "status": "ok"},
+          ...
+        ]
+        Status values: "over" | "warning" (>80% of limit) | "ok"
+    """
+    limits = custom_limits if custom_limits is not None else BUDGET_LIMITS
+
+    expenses = df[
+        df[type_col].str.lower().str.contains("expense|debit", na=False)
+    ].groupby(category_col)[amount_col].sum().abs()
+
+    results: list[dict] = []
+    for category, limit in sorted(limits.items()):
+        actual   = float(expenses.get(category, 0.0))
+        variance = round(limit - actual, 2)
+        if actual > limit:
+            status = "over"
+        elif actual > limit * 0.80:
+            status = "warning"
+        else:
+            status = "ok"
+        results.append({
+            "category": category,
+            "limit":    round(limit, 2),
+            "actual":   round(actual, 2),
+            "variance": variance,
+            "status":   status,
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Visualization
 # ---------------------------------------------------------------------------
 
@@ -402,14 +475,23 @@ def create_visuals(
     type_col: str = "Type",
     category_col: str = "Category",
     amount_col: str = "Amount",
+    budget_limits: dict[str, float] | None = None,
 ) -> str:
     """Generate a bar chart of expenses by category and save as PNG.
+
+    Bars are coloured by budget status:
+      steelblue  — within budget
+      orange     — within budget but >80% consumed (warning)
+      crimson    — over budget
+
+    When budget_limits is provided (defaults to BUDGET_LIMITS), a dashed
+    horizontal marker is drawn at the limit value for each bar.
 
     Args:
         df: DataFrame with at minimum Type, Category, and Amount columns.
         output_path: where to write the PNG file.
-        type_col / category_col / amount_col: column names (default match
-            process_stark_ledger() output after title-casing).
+        type_col / category_col / amount_col: column name overrides.
+        budget_limits: per-category USD caps; None uses BUDGET_LIMITS.
 
     Returns:
         Absolute path of the saved chart file.
@@ -417,6 +499,8 @@ def create_visuals(
     import matplotlib
     matplotlib.use("Agg")  # non-interactive backend — safe for servers
     import matplotlib.pyplot as plt
+
+    limits = budget_limits if budget_limits is not None else BUDGET_LIMITS
 
     expenses = df[df[type_col].str.lower().str.contains("expense|debit", na=False)]
     if expenses.empty:
@@ -429,15 +513,49 @@ def create_visuals(
         .sort_values(ascending=False)
     )
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    category_totals.plot(kind="bar", color="steelblue", ax=ax)
-    ax.set_title("Stark Financial Holdings: Expenses by Category", fontsize=14, fontweight="bold")
+    # Colour each bar by status
+    def _bar_colour(cat: str, actual: float) -> str:
+        limit = limits.get(cat)
+        if limit is None:
+            return "steelblue"
+        if actual > limit:
+            return "crimson"
+        if actual > limit * 0.80:
+            return "darkorange"
+        return "steelblue"
+
+    colours = [_bar_colour(cat, val) for cat, val in category_totals.items()]
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+    bars = ax.bar(range(len(category_totals)), category_totals.values, color=colours)
+    ax.set_xticks(range(len(category_totals)))
+    ax.set_xticklabels(category_totals.index, rotation=40, ha="right")
+
+    # Budget threshold markers
+    for i, (cat, actual) in enumerate(category_totals.items()):
+        limit = limits.get(cat)
+        if limit is not None:
+            ax.plot([i - 0.4, i + 0.4], [limit, limit],
+                    color="black", linewidth=1.5, linestyle="--", zorder=5)
+
+    ax.set_title("Stark Financial Holdings: Expenses by Category",
+                 fontsize=14, fontweight="bold")
     ax.set_ylabel("Total Amount (USD)")
     ax.set_xlabel("Category")
-    ax.tick_params(axis="x", rotation=45)
-    ax.yaxis.set_major_formatter(
-        plt.FuncFormatter(lambda x, _: f"${x:,.2f}")
-    )
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"${x:,.2f}"))
+
+    # Legend
+    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Patch(facecolor="steelblue",  label="Within budget"),
+        Patch(facecolor="darkorange", label="Warning (>80%)"),
+        Patch(facecolor="crimson",    label="Over budget"),
+        Line2D([0], [0], color="black", linewidth=1.5,
+               linestyle="--", label="Budget limit"),
+    ]
+    ax.legend(handles=legend_elements, loc="upper right", fontsize=9)
+
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
