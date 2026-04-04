@@ -22,15 +22,34 @@ jobs:
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
-
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - name: Install actionlint
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+
+      - name: Lint GitHub Actions workflows
+        run: ./actionlint -color
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=80
+
+      - name: Assertion Density Quality Gate
+        # --diff-only: Boy Scout Rule — only checks functions touched in this PR.
+        # Legacy code that wasn't modified is skipped entirely.
+        # New files are always checked in full.
+        # --min-density 0.5: new/modified integration tests must hit the value zone.
+        #
+        # Grace period: set continue-on-error: true for the first 7 days of
+        # rollout so the team can observe density without being blocked.
+        # Remove continue-on-error once the team has stabilised above the floor.
+        continue-on-error: false
+        run: python scripts/check_assertion_density.py --diff-only --min-density 0.5 tests/

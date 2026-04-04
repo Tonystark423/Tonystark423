@@ -1,0 +1,17 @@
+# .mailmap — canonical author identity map
+#
+# Prevents leaderboard splitting when contributors commit under multiple
+# email addresses (work laptop vs personal, old vs new address, etc).
+#
+# Format:
+#   Canonical Name <canonical@email.com> <alias@email.com>
+#   Canonical Name <canonical@email.com> Old Name <alias@email.com>
+#
+# Examples (uncomment and fill in real entries):
+#
+# Jane Smith <jane@company.com> <jane.smith@gmail.com>
+# Jane Smith <jane@company.com> J. Smith <jsmith@oldcompany.com>
+# Bob Jones <bob@company.com> Robert Jones <robert@company.com>
+#
+# Verify the map is working:
+#   git log --format='%aN <%aE>' | sort -u
