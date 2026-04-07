@@ -6,3 +6,4 @@ starkbank>=2.10.0
 pandas>=2.0.0
 matplotlib>=3.8.0
 openpyxl>=3.1.0
+huggingface_hub>=0.23.0

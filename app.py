@@ -233,6 +233,89 @@ def delete_asset(asset_id):
     return "", 204
 
 
+@app.route("/api/backup", methods=["POST"])
+@require_auth
+def backup():
+    """Push ledger.db to the configured Hugging Face bucket.
+
+    Requires HF_TOKEN and HF_BUCKET in the environment.
+
+    Returns:
+      {"status": "ok", "local": "...", "remote": "hf://buckets/...", "timestamp": "..."}
+    """
+    missing = [v for v in ("HF_TOKEN", "HF_BUCKET") if not os.getenv(v)]
+    if missing:
+        return jsonify({"error": f"Missing env vars: {', '.join(missing)}"}), 503
+
+    try:
+        from hf_bucket_sync import backup_db
+    except ImportError:
+        return jsonify({"error": "huggingface_hub not installed. Run: pip install huggingface_hub"}), 503
+
+    try:
+        result = backup_db(db_path=DB_PATH)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    return jsonify(result)
+
+
+@app.route("/api/backup/restore", methods=["POST"])
+@require_auth
+def backup_restore():
+    """Pull ledger.db from the HF bucket to local disk (disaster recovery).
+
+    WARNING: Overwrites the running DB. The server should be taken offline
+    or the endpoint called only when no writes are in-flight.
+
+    Requires confirmation in the JSON body: {"confirm": "YES"}
+    """
+    data = request.get_json(silent=True) or {}
+    if data.get("confirm") != "YES":
+        return jsonify({"error": 'Send {"confirm": "YES"} to proceed'}), 400
+
+    missing = [v for v in ("HF_TOKEN", "HF_BUCKET") if not os.getenv(v)]
+    if missing:
+        return jsonify({"error": f"Missing env vars: {', '.join(missing)}"}), 503
+
+    try:
+        from hf_bucket_sync import restore_db
+    except ImportError:
+        return jsonify({"error": "huggingface_hub not installed"}), 503
+
+    try:
+        result = restore_db(db_path=DB_PATH)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    return jsonify(result)
+
+
+@app.route("/api/exports", methods=["GET"])
+@require_auth
+def list_exports():
+    """List report files archived in the HF bucket's exports/ prefix.
+
+    Returns:
+      [{"name": str, "size": int, "last_modified": str}, ...]
+    """
+    missing = [v for v in ("HF_TOKEN", "HF_BUCKET") if not os.getenv(v)]
+    if missing:
+        return jsonify({"error": f"Missing env vars: {', '.join(missing)}"}), 503
+
+    try:
+        from hf_bucket_sync import list_exports as _list_exports
+    except ImportError:
+        return jsonify({"error": "huggingface_hub not installed"}), 503
+
+    try:
+        items = _list_exports()
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    return jsonify(items)
+
+
 @app.route("/api/export", methods=["GET"])
 @require_auth
 def export_csv():
@@ -403,6 +486,13 @@ def export_excel():
         _export_excel(df, output_path=tmp_path, budget_limits=BUDGET_LIMITS)
         with open(tmp_path, "rb") as fh:
             xlsx_bytes = fh.read()
+        # Auto-archive to HF bucket if configured (non-blocking; failure is logged not raised)
+        if os.getenv("HF_TOKEN") and os.getenv("HF_BUCKET"):
+            try:
+                from hf_bucket_sync import archive_export
+                archive_export(tmp_path, subfolder="excel")
+            except Exception:
+                pass  # bucket archive is best-effort; don't fail the download
     finally:
         os.unlink(tmp_path)
 

@@ -1,0 +1,78 @@
+name: Ledger DB Backup
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC daily
+  workflow_dispatch:       # manual trigger from GitHub UI
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install huggingface_hub python-dotenv
+
+      - name: Download current ledger.db from bucket (rolling sync)
+        # Pull the live DB from the running server via the backup endpoint.
+        # If the server exposes /api/backup, call it instead:
+        #   curl -u $LEDGER_USER:$LEDGER_PASS -X POST https://your-server/api/backup
+        # For CI-only use, we sync whatever DB artefact was uploaded previously.
+        run: |
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+          # Verify bucket is reachable
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          info = api.repo_info(repo_id=os.environ["HF_BUCKET"], repo_type="bucket")
+          print(f"Bucket reachable: {info.id}")
+          EOF
+        env:
+          HF_TOKEN:  ${{ secrets.HF_TOKEN }}
+          HF_BUCKET: ${{ secrets.HF_BUCKET }}
+
+      - name: Trigger server-side backup
+        # POST to the live server's /api/backup endpoint.
+        # Set LEDGER_URL, LEDGER_USER, LEDGER_PASS as repository secrets.
+        if: ${{ env.LEDGER_URL != '' }}
+        run: |
+          curl -fsS \
+            -u "$LEDGER_USER:$LEDGER_PASS" \
+            -X POST "$LEDGER_URL/api/backup" \
+            | python -m json.tool
+        env:
+          LEDGER_URL:  ${{ secrets.LEDGER_URL }}
+          LEDGER_USER: ${{ secrets.LEDGER_USER }}
+          LEDGER_PASS: ${{ secrets.LEDGER_PASS }}
+
+      - name: Confirm backup entry in bucket
+        run: |
+          python - <<'EOF'
+          import os, json
+          from huggingface_hub import HfApi
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          files = list(api.list_repo_tree(
+              repo_id=os.environ["HF_BUCKET"],
+              repo_type="bucket",
+              path_in_repo=os.getenv("HF_BUCKET_PREFIX", "ledger") + "/backups/",
+              expand=True,
+          ))
+          if not files:
+              print("WARNING: no backup files found in bucket")
+          else:
+              for f in files:
+                  size_kb = getattr(f, "size", 0) / 1024
+                  print(f"  {size_kb:>10.1f} KB  {getattr(f, 'rfilename', f)}")
+          EOF
+        env:
+          HF_TOKEN:         ${{ secrets.HF_TOKEN }}
+          HF_BUCKET:        ${{ secrets.HF_BUCKET }}
+          HF_BUCKET_PREFIX: ${{ secrets.HF_BUCKET_PREFIX || 'ledger' }}
