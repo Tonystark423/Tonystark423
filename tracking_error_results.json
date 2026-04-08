@@ -1,0 +1,42 @@
+{
+  "tracking_error": {
+    "tracking_error_annualised": 0.06787537599650308,
+    "mean_excess_return_per_period": 0.018833333333333334,
+    "information_ratio": 1.1098772158140897,
+    "n_periods": 6,
+    "classification": "MODERATE ACTIVE (4\u20137%)   \u2014 meaningful bets, some decoupling"
+  },
+  "active_share": {
+    "active_share": 0.33,
+    "classification": "CLOSET INDEXER  (20\u201360%) \u2014 fee drag without active upside"
+  },
+  "simulation": {
+    "vault": {
+      "mean": 0.030626381758016647,
+      "std": 0.05477023496147963,
+      "p05": -0.055049050913546095,
+      "p25": -0.0061950518959697255,
+      "p50": 0.02817462793316613,
+      "p75": 0.0651954908825455,
+      "p95": 0.12578797165733416,
+      "pct_positive": 0.70822,
+      "upside_capture": 0.09761334372416802,
+      "downside_exposure": 0.08322367884671222,
+      "asymmetry_ratio": 1.1729034942562415
+    },
+    "herd": {
+      "mean": 0.012012419843059625,
+      "std": 0.005007547355885185,
+      "p05": 0.003749833890116778,
+      "p25": 0.008637930829773198,
+      "p50": 0.012011678518306462,
+      "p75": 0.015388768206067273,
+      "p95": 0.020259248486219864,
+      "pct_positive": 0.99136,
+      "upside_capture": 0.008247569967913402,
+      "downside_exposure": 0.008261844628189683,
+      "asymmetry_ratio": 0.9982722187454874
+    },
+    "n_simulations": 50000
+  }
+}
