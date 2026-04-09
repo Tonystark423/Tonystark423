@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>StarkDeck</RootNamespace>
+    <AssemblyName>StarkDeck</AssemblyName>
+    <!-- Issue #71 / PR #72: StreamDeckSharp 6.1.0 targets net8.0 with ImageSharp 2.1.x.
+         SixLabors.ImageSharp.Drawing 1.x is the compatible drawing companion for ImageSharp 2.x. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StreamDeckSharp"               Version="6.1.0" />
+    <PackageReference Include="SixLabors.ImageSharp.Drawing"  Version="1.0.0" />
+  </ItemGroup>
+
+</Project>
