@@ -485,7 +485,7 @@ def report_budget():
 @app.route("/api/address/<address>/balance", methods=["GET"])
 @require_auth
 def address_balance(address):
-    """Look up the on-chain confirmed balance for a cryptocurrency address.
+    """Look up the on-chain summary for a cryptocurrency address.
 
     Currently supports Bitcoin mainnet via the blockchain.info public API.
 
@@ -494,10 +494,15 @@ def address_balance(address):
 
     Response (200):
       {
-        "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7Divf8a",
-        "balance_satoshi": 6825000000,
-        "balance_btc": "68.25000000",
-        "network": "bitcoin"
+        "address":             "1A1zP1eP5QGefi2DMPTfTL5SLmv7Divf8a",
+        "balance_satoshi":     6825000000,
+        "balance_btc":         "68.25000000",
+        "total_received_satoshi": 6825000000,
+        "total_received_btc":  "68.25000000",
+        "total_sent_satoshi":  0,
+        "total_sent_btc":      "0.00000000",
+        "transactions":        1521,
+        "network":             "bitcoin"
       }
 
     Errors:
@@ -521,14 +526,25 @@ def address_balance(address):
         return jsonify({"error": "Could not reach blockchain API"}), 502
 
     info = payload.get(address, {})
-    balance_satoshi = info.get("final_balance", 0)
-    balance_btc = f"{balance_satoshi / 1e8:.8f}"
+    balance_satoshi      = info.get("final_balance", 0)
+    total_received_sat   = info.get("total_received", 0)
+    # total_sent is not returned directly; derive it from received minus balance.
+    total_sent_sat       = total_received_sat - balance_satoshi
+    n_tx                 = info.get("n_tx", 0)
+
+    def _btc(satoshi: int) -> str:
+        return f"{satoshi / 1e8:.8f}"
 
     return jsonify({
-        "address": address,
-        "balance_satoshi": balance_satoshi,
-        "balance_btc": balance_btc,
-        "network": "bitcoin",
+        "address":                address,
+        "balance_satoshi":        balance_satoshi,
+        "balance_btc":            _btc(balance_satoshi),
+        "total_received_satoshi": total_received_sat,
+        "total_received_btc":     _btc(total_received_sat),
+        "total_sent_satoshi":     total_sent_sat,
+        "total_sent_btc":         _btc(total_sent_sat),
+        "transactions":           n_tx,
+        "network":                "bitcoin",
     })
 
 

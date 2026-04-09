@@ -63,9 +63,17 @@ _GENESIS_ADDRESS = "1A1zP1eP5QGefi2DMPTfTL5SLmv7Divf8a"
 _GENESIS_SATOSHI = 6825000000
 
 
-def _mock_urlopen(address, satoshi):
+def _mock_urlopen(address, final_balance, total_received=None, n_tx=1):
     """Return a context-manager mock that yields a blockchain.info-shaped response."""
-    body = json.dumps({address: {"final_balance": satoshi, "n_tx": 1, "total_received": satoshi}})
+    if total_received is None:
+        total_received = final_balance
+    body = json.dumps({
+        address: {
+            "final_balance": final_balance,
+            "total_received": total_received,
+            "n_tx": n_tx,
+        }
+    })
     resp = MagicMock()
     resp.read.return_value = body.encode()
     resp.__enter__ = lambda s: s
@@ -138,6 +146,14 @@ class TestAddressValidation:
 # Happy-path response shape
 # ---------------------------------------------------------------------------
 
+_ALL_FIELDS = {
+    "address", "balance_satoshi", "balance_btc",
+    "total_received_satoshi", "total_received_btc",
+    "total_sent_satoshi", "total_sent_btc",
+    "transactions", "network",
+}
+
+
 class TestAddressBalanceHappyPath:
     def test_response_contains_all_required_fields(self, client, auth):
         mock_resp = _mock_urlopen(_GENESIS_ADDRESS, _GENESIS_SATOSHI)
@@ -145,10 +161,15 @@ class TestAddressBalanceHappyPath:
             resp = client.get(f"/api/address/{_GENESIS_ADDRESS}/balance", auth=auth)
         data = resp.get_json()
         assert resp.status_code == 200
+        assert _ALL_FIELDS.issubset(data.keys())
+
+    def test_address_and_network_fields(self, client, auth):
+        mock_resp = _mock_urlopen(_GENESIS_ADDRESS, _GENESIS_SATOSHI)
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            resp = client.get(f"/api/address/{_GENESIS_ADDRESS}/balance", auth=auth)
+        data = resp.get_json()
         assert data["address"] == _GENESIS_ADDRESS
         assert data["network"] == "bitcoin"
-        assert "balance_satoshi" in data
-        assert "balance_btc" in data
 
     def test_balance_satoshi_matches_upstream(self, client, auth):
         mock_resp = _mock_urlopen(_GENESIS_ADDRESS, _GENESIS_SATOSHI)
@@ -163,15 +184,46 @@ class TestAddressBalanceHappyPath:
             resp = client.get(f"/api/address/{_GENESIS_ADDRESS}/balance", auth=auth)
         assert resp.get_json()["balance_btc"] == "68.25000000"
 
+    def test_total_received_matches_upstream(self, client, auth):
+        received = 10_000_000_000  # 100 BTC ever received
+        balance  =  6_825_000_000  # currently holds 68.25 BTC
+        mock_resp = _mock_urlopen(_GENESIS_ADDRESS, balance, total_received=received)
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            resp = client.get(f"/api/address/{_GENESIS_ADDRESS}/balance", auth=auth)
+        data = resp.get_json()
+        assert data["total_received_satoshi"] == received
+        assert data["total_received_btc"] == "100.00000000"
+
+    def test_total_sent_is_derived_correctly(self, client, auth):
+        """total_sent = total_received - final_balance."""
+        received = 10_000_000_000  # 100 BTC
+        balance  =  6_825_000_000  # 68.25 BTC remaining
+        sent     =  3_175_000_000  # 31.75 BTC spent
+        mock_resp = _mock_urlopen(_GENESIS_ADDRESS, balance, total_received=received)
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            resp = client.get(f"/api/address/{_GENESIS_ADDRESS}/balance", auth=auth)
+        data = resp.get_json()
+        assert data["total_sent_satoshi"] == sent
+        assert data["total_sent_btc"] == "31.75000000"
+
+    def test_transaction_count_matches_upstream(self, client, auth):
+        mock_resp = _mock_urlopen(_GENESIS_ADDRESS, _GENESIS_SATOSHI, n_tx=1521)
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            resp = client.get(f"/api/address/{_GENESIS_ADDRESS}/balance", auth=auth)
+        assert resp.get_json()["transactions"] == 1521
+
     def test_zero_balance_address(self, client, auth):
-        """An address with no funds must return 0 satoshi and eight-zero BTC string."""
+        """An address with no funds: all satoshi fields 0, BTC strings eight zeros."""
         empty_addr = "1BpEi6DfDAUFd153wiGrvkiKW1iHBGEjVL"
-        mock_resp = _mock_urlopen(empty_addr, 0)
+        mock_resp = _mock_urlopen(empty_addr, 0, total_received=0, n_tx=0)
         with patch("urllib.request.urlopen", return_value=mock_resp):
             resp = client.get(f"/api/address/{empty_addr}/balance", auth=auth)
         data = resp.get_json()
         assert data["balance_satoshi"] == 0
         assert data["balance_btc"] == "0.00000000"
+        assert data["total_sent_satoshi"] == 0
+        assert data["total_sent_btc"] == "0.00000000"
+        assert data["transactions"] == 0
 
     def test_upstream_url_includes_address(self, client, auth):
         """Verify the correct blockchain.info URL is constructed."""
