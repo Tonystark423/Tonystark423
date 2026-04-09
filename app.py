@@ -30,6 +30,14 @@ WRITABLE_COLUMNS = [c for c in COLUMNS if c not in ("id", "created_at", "updated
 
 ASSET_NAME_MAX_LENGTH = 100
 
+# Batch signing log columns
+SIGNING_COLUMNS = [
+    "id", "batch_ref", "asset_category", "signer", "num_items",
+    "total_value", "currency", "status", "notes", "signed_at",
+    "created_at", "updated_at",
+]
+SIGNING_WRITABLE = [c for c in SIGNING_COLUMNS if c not in ("id", "created_at", "updated_at")]
+
 
 def validate_fields(fields: dict) -> tuple[dict, str | None]:
     """
@@ -504,6 +512,186 @@ def sync_starkbank():
         return jsonify({"error": str(exc)}), 502
 
     return jsonify({"inserted": inserted, "skipped": skipped})
+
+
+# ---------------------------------------------------------------------------
+# Portfolio summary — crypto + equities + all holdings grouped by category
+# ---------------------------------------------------------------------------
+
+@app.route("/api/portfolio/summary", methods=["GET"])
+@require_auth
+def portfolio_summary():
+    """Return holdings grouped by category, subcategory, status, and owner.
+
+    Optional query params:
+      owner     filter by beneficial_owner (e.g. 'All-Star Financial Holdings')
+      category  filter by asset category
+      status    filter by asset status (active / sold / pending)
+
+    Response (200):
+      [
+        { "category": "Cryptocurrency", "subcategory": "BTC", "status": "active",
+          "beneficial_owner": "All-Star Financial Holdings",
+          "asset_count": 3, "total_value_usd": 125000.0, "unit": "BTC" },
+        ...
+      ]
+    """
+    db = get_db()
+    sql = "SELECT * FROM portfolio_summary WHERE 1=1"
+    params: list = []
+
+    owner = request.args.get("owner", "").strip()
+    category = request.args.get("category", "").strip()
+    status = request.args.get("status", "").strip()
+
+    if owner:
+        sql += " AND beneficial_owner = ?"
+        params.append(owner)
+    if category:
+        sql += " AND category = ?"
+        params.append(category)
+    if status:
+        sql += " AND status = ?"
+        params.append(status)
+
+    sql += " ORDER BY category, subcategory"
+    rows = db.execute(sql, params).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+# ---------------------------------------------------------------------------
+# Batch signing log
+# ---------------------------------------------------------------------------
+
+def _validate_signing(fields: dict) -> tuple[dict, str | None]:
+    """Validate writable batch_signings fields."""
+    if "total_value" in fields and fields["total_value"] is not None:
+        try:
+            val = Decimal(str(fields["total_value"]))
+        except InvalidOperation:
+            return fields, "total_value must be a number"
+        if val <= 0:
+            return fields, "total_value must be greater than zero"
+        fields["total_value"] = str(val.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+    if "num_items" in fields and fields["num_items"] is not None:
+        try:
+            n = int(fields["num_items"])
+        except (TypeError, ValueError):
+            return fields, "num_items must be an integer"
+        if n < 0:
+            return fields, "num_items cannot be negative"
+        fields["num_items"] = n
+
+    if "batch_ref" in fields and fields["batch_ref"] is not None:
+        fields["batch_ref"] = str(fields["batch_ref"]).strip()
+        if not fields["batch_ref"]:
+            return fields, "batch_ref cannot be blank"
+
+    return fields, None
+
+
+@app.route("/api/signings", methods=["GET"])
+@require_auth
+def list_signings():
+    """List batch signing records.
+
+    Query params:
+      status         pending / signed / failed / cancelled
+      asset_category Cryptocurrency / Securities & Commodities / ...
+      limit          max rows (default 200, max 1000)
+      offset         pagination offset
+    """
+    db = get_db()
+    sql = "SELECT * FROM batch_signings WHERE 1=1"
+    params: list = []
+
+    status = request.args.get("status", "").strip()
+    category = request.args.get("asset_category", "").strip()
+    limit = min(int(request.args.get("limit", 200)), 1000)
+    offset = int(request.args.get("offset", 0))
+
+    if status:
+        sql += " AND status = ?"
+        params.append(status)
+    if category:
+        sql += " AND asset_category = ?"
+        params.append(category)
+
+    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+    rows = db.execute(sql, params).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/signings", methods=["POST"])
+@require_auth
+def create_signing():
+    """Record a new batch signing event.
+
+    Required JSON body fields: batch_ref
+    Optional: asset_category, signer, num_items, total_value, currency,
+              status, notes, signed_at
+    """
+    data = request.get_json(force=True)
+    fields = {k: data[k] for k in SIGNING_WRITABLE if k in data}
+    if "batch_ref" not in fields:
+        return jsonify({"error": "batch_ref is required"}), 400
+    fields, err = _validate_signing(fields)
+    if err:
+        return jsonify({"error": err}), 400
+
+    cols = ", ".join(fields.keys())
+    placeholders = ", ".join("?" for _ in fields)
+    db = get_db()
+    try:
+        cur = db.execute(
+            f"INSERT INTO batch_signings ({cols}) VALUES ({placeholders})",
+            list(fields.values()),
+        )
+    except sqlite3.IntegrityError as e:
+        return jsonify({"error": str(e)}), 400
+    db.commit()
+    row = db.execute("SELECT * FROM batch_signings WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return jsonify(dict(row)), 201
+
+
+@app.route("/api/signings/<int:signing_id>", methods=["GET"])
+@require_auth
+def get_signing(signing_id):
+    row = get_db().execute(
+        "SELECT * FROM batch_signings WHERE id = ?", (signing_id,)
+    ).fetchone()
+    if row is None:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(dict(row))
+
+
+@app.route("/api/signings/<int:signing_id>", methods=["PUT"])
+@require_auth
+def update_signing(signing_id):
+    """Update a batch signing record (e.g. advance status from pending -> signed)."""
+    db = get_db()
+    if db.execute("SELECT id FROM batch_signings WHERE id = ?", (signing_id,)).fetchone() is None:
+        return jsonify({"error": "Not found"}), 404
+
+    data = request.get_json(force=True)
+    fields = {k: data[k] for k in SIGNING_WRITABLE if k in data}
+    if not fields:
+        return jsonify({"error": "No valid fields provided"}), 400
+    fields, err = _validate_signing(fields)
+    if err:
+        return jsonify({"error": err}), 400
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    set_clause += ", updated_at = datetime('now')"
+    db.execute(
+        f"UPDATE batch_signings SET {set_clause} WHERE id = ?",
+        list(fields.values()) + [signing_id],
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM batch_signings WHERE id = ?", (signing_id,)).fetchone()
+    return jsonify(dict(row))
 
 
 if __name__ == "__main__":

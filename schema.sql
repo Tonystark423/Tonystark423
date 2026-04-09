@@ -1,3 +1,48 @@
+-- ---------------------------------------------------------------------------
+-- Portfolio: Cryptocurrency, US Equities, and other holdings
+-- ---------------------------------------------------------------------------
+-- Existing 'assets' table covers Cryptocurrency and Securities & Commodities.
+-- Use beneficial_owner = 'All-Star Financial Holdings' to tag those holdings.
+-- Use subcategory for ticker / coin symbol (e.g. 'BTC', 'AAPL').
+-- Use custodian for exchange or wallet provider (e.g. 'Coinbase', 'NYSE').
+-- ---------------------------------------------------------------------------
+
+-- Batch Signing Log — records each signing event for crypto transactions,
+-- Stark Bank payment batches, or equity trade authorizations.
+CREATE TABLE IF NOT EXISTS batch_signings (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_ref       TEXT    NOT NULL,   -- internal reference / txn batch ID
+    asset_category  TEXT    CHECK(asset_category IN (
+                        'Cryptocurrency',
+                        'Securities & Commodities',
+                        'Money Market Funds',
+                        'Other'
+                    )),
+    signer          TEXT,               -- individual or system that signed
+    num_items       INTEGER DEFAULT 0,  -- number of transactions in batch
+    total_value     TEXT,               -- Decimal string, same convention as assets
+    currency        TEXT    DEFAULT 'USD',
+    status          TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK(status IN ('pending', 'signed', 'failed', 'cancelled')),
+    notes           TEXT,
+    signed_at       TEXT,               -- ISO datetime when signing completed
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Portfolio summary view — total holdings by category, status, and owner
+CREATE VIEW IF NOT EXISTS portfolio_summary AS
+SELECT
+    category,
+    subcategory,
+    status,
+    beneficial_owner,
+    COUNT(*)                              AS asset_count,
+    SUM(CAST(estimated_value AS REAL))    AS total_value_usd,
+    unit
+FROM assets
+GROUP BY category, subcategory, status, beneficial_owner, unit;
+
 CREATE TABLE IF NOT EXISTS assets (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_name       TEXT    NOT NULL,
