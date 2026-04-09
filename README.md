@@ -64,6 +64,7 @@ All endpoints require HTTP Basic Auth.
 | `PUT` | `/api/assets/<id>` | Update an asset |
 | `DELETE` | `/api/assets/<id>` | Delete an asset |
 | `GET` | `/api/export` | Download all assets as CSV |
+| `GET` | `/api/address/<address>/balance` | Look up on-chain balance for a Bitcoin address |
 
 ## Testing
 
