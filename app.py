@@ -2,8 +2,12 @@
 
 import csv
 import io
+import json as _json
 import os
+import re
 import sqlite3
+import urllib.error
+import urllib.request
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
@@ -29,6 +33,12 @@ COLUMNS = [
 WRITABLE_COLUMNS = [c for c in COLUMNS if c not in ("id", "created_at", "updated_at")]
 
 ASSET_NAME_MAX_LENGTH = 100
+
+# Accepts Bitcoin legacy (P2PKH/P2SH), bech32 (bc1…), and other common
+# alphanumeric address formats.  The regex is intentionally permissive on
+# character set — the upstream API validates the actual address; we only
+# guard against path-traversal and injection characters.
+_ADDRESS_RE = re.compile(r"^[A-Za-z0-9]{25,90}$")
 
 
 def validate_fields(fields: dict) -> tuple[dict, str | None]:
@@ -470,6 +480,72 @@ def report_budget():
         "ok":      sum(1 for i in items if i["status"] == "ok"),
     }
     return jsonify({"summary": summary, "items": items})
+
+
+@app.route("/api/address/<address>/balance", methods=["GET"])
+@require_auth
+def address_balance(address):
+    """Look up the on-chain summary for a cryptocurrency address.
+
+    Currently supports Bitcoin mainnet via the blockchain.info public API.
+
+    Path param:
+      address   Bitcoin address (legacy, P2SH, or bech32)
+
+    Response (200):
+      {
+        "address":             "1A1zP1eP5QGefi2DMPTfTL5SLmv7Divf8a",
+        "balance_satoshi":     6825000000,
+        "balance_btc":         "68.25000000",
+        "total_received_satoshi": 6825000000,
+        "total_received_btc":  "68.25000000",
+        "total_sent_satoshi":  0,
+        "total_sent_btc":      "0.00000000",
+        "transactions":        1521,
+        "network":             "bitcoin"
+      }
+
+    Errors:
+      400  address contains invalid characters or is the wrong length
+      404  address not recognised by the upstream API
+      502  upstream API unreachable or returned an unexpected error
+    """
+    if not _ADDRESS_RE.match(address):
+        return jsonify({"error": "Invalid address format"}), 400
+
+    url = f"https://blockchain.info/balance?active={address}"
+    req = urllib.request.Request(url, headers={"User-Agent": "StarkLedger/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = _json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 400:
+            return jsonify({"error": "Address not found or invalid"}), 404
+        return jsonify({"error": f"Upstream API error: {exc.code}"}), 502
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return jsonify({"error": "Could not reach blockchain API"}), 502
+
+    info = payload.get(address, {})
+    balance_satoshi      = info.get("final_balance", 0)
+    total_received_sat   = info.get("total_received", 0)
+    # total_sent is not returned directly; derive it from received minus balance.
+    total_sent_sat       = total_received_sat - balance_satoshi
+    n_tx                 = info.get("n_tx", 0)
+
+    def _btc(satoshi: int) -> str:
+        return f"{satoshi / 1e8:.8f}"
+
+    return jsonify({
+        "address":                address,
+        "balance_satoshi":        balance_satoshi,
+        "balance_btc":            _btc(balance_satoshi),
+        "total_received_satoshi": total_received_sat,
+        "total_received_btc":     _btc(total_received_sat),
+        "total_sent_satoshi":     total_sent_sat,
+        "total_sent_btc":         _btc(total_sent_sat),
+        "transactions":           n_tx,
+        "network":                "bitcoin",
+    })
 
 
 @app.route("/api/sync/starkbank", methods=["POST"])
