@@ -43,6 +43,68 @@ SELECT
 FROM assets
 GROUP BY category, subcategory, status, beneficial_owner, unit;
 
+-- ---------------------------------------------------------------------------
+-- Bankruptcy Claims — track cases, trustees, and recovered assets
+-- ---------------------------------------------------------------------------
+-- Workflow:
+--   1. Create a claim record with the PACER case number and trustee info.
+--   2. As assets are recovered, insert them into the assets table and link
+--      them here via recovered_asset_id.
+--   3. Advance status through: identified → filed → pending_recovery → recovered → closed
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS bankruptcy_claims (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    claimant_name       TEXT    NOT NULL,           -- name searched (e.g. "Evan Jacob Burke")
+    case_number         TEXT,                       -- PACER case number (e.g. "24-10042")
+    court               TEXT,                       -- e.g. "D.N.H." (District of New Hampshire)
+    trustee_name        TEXT,
+    trustee_contact     TEXT,
+    source              TEXT    CHECK(source IN (
+                            'PACER',
+                            'State Unclaimed Property',
+                            'Bankruptcy Court',
+                            'Trustee Direct',
+                            'Other'
+                        )),
+    claim_type          TEXT    CHECK(claim_type IN (
+                            'Cash',
+                            'Securities',
+                            'Cryptocurrency',
+                            'Real Property',
+                            'Personal Property',
+                            'Other'
+                        )),
+    claimed_value       TEXT,                       -- Decimal string, estimated value of claim
+    recovered_value     TEXT,                       -- Decimal string, actual recovered amount
+    currency            TEXT    DEFAULT 'USD',
+    status              TEXT    NOT NULL DEFAULT 'identified'
+                                CHECK(status IN (
+                                    'identified',       -- found in search
+                                    'filed',            -- claim formally filed
+                                    'pending_recovery', -- approved, awaiting disbursement
+                                    'recovered',        -- funds/assets received
+                                    'closed'            -- resolved / no recovery
+                                )),
+    recovered_asset_id  INTEGER REFERENCES assets(id),  -- linked ledger asset once recovered
+    filing_date         TEXT,                       -- ISO date claim was filed
+    recovery_date       TEXT,                       -- ISO date asset was received
+    notes               TEXT,
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Summary view: total claimed vs recovered by status and claimant
+CREATE VIEW IF NOT EXISTS bankruptcy_summary AS
+SELECT
+    claimant_name,
+    status,
+    source,
+    COUNT(*)                                   AS claim_count,
+    SUM(CAST(claimed_value   AS REAL))         AS total_claimed_usd,
+    SUM(CAST(recovered_value AS REAL))         AS total_recovered_usd
+FROM bankruptcy_claims
+GROUP BY claimant_name, status, source;
+
 CREATE TABLE IF NOT EXISTS assets (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_name       TEXT    NOT NULL,

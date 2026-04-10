@@ -515,6 +515,159 @@ def sync_starkbank():
 
 
 # ---------------------------------------------------------------------------
+# Bankruptcy claims
+# ---------------------------------------------------------------------------
+
+CLAIM_COLUMNS = [
+    "id", "claimant_name", "case_number", "court", "trustee_name",
+    "trustee_contact", "source", "claim_type", "claimed_value",
+    "recovered_value", "currency", "status", "recovered_asset_id",
+    "filing_date", "recovery_date", "notes", "created_at", "updated_at",
+]
+CLAIM_WRITABLE = [c for c in CLAIM_COLUMNS if c not in ("id", "created_at", "updated_at")]
+
+
+def _validate_claim(fields: dict) -> tuple[dict, str | None]:
+    for money_field in ("claimed_value", "recovered_value"):
+        if money_field in fields and fields[money_field] is not None:
+            try:
+                val = Decimal(str(fields[money_field]))
+            except InvalidOperation:
+                return fields, f"{money_field} must be a number"
+            if val < 0:
+                return fields, f"{money_field} cannot be negative"
+            fields[money_field] = str(val.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+    if "claimant_name" in fields and fields["claimant_name"] is not None:
+        fields["claimant_name"] = str(fields["claimant_name"]).strip()
+        if not fields["claimant_name"]:
+            return fields, "claimant_name cannot be blank"
+
+    return fields, None
+
+
+@app.route("/api/claims", methods=["GET"])
+@require_auth
+def list_claims():
+    """List bankruptcy claims.
+
+    Query params:
+      claimant   filter by claimant_name (partial, case-insensitive)
+      status     identified / filed / pending_recovery / recovered / closed
+      source     PACER / State Unclaimed Property / ...
+      limit      max rows (default 200, max 1000)
+      offset     pagination offset
+    """
+    db = get_db()
+    sql = "SELECT * FROM bankruptcy_claims WHERE 1=1"
+    params: list = []
+
+    claimant = request.args.get("claimant", "").strip()
+    status   = request.args.get("status",   "").strip()
+    source   = request.args.get("source",   "").strip()
+    limit    = min(int(request.args.get("limit",  200)), 1000)
+    offset   = int(request.args.get("offset", 0))
+
+    if claimant:
+        sql += " AND claimant_name LIKE ?"
+        params.append(f"%{claimant}%")
+    if status:
+        sql += " AND status = ?"
+        params.append(status)
+    if source:
+        sql += " AND source = ?"
+        params.append(source)
+
+    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+    rows = db.execute(sql, params).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/claims", methods=["POST"])
+@require_auth
+def create_claim():
+    """Record a new bankruptcy claim.
+
+    Required JSON body: claimant_name
+    Optional: case_number, court, trustee_name, trustee_contact, source,
+              claim_type, claimed_value, currency, status, filing_date, notes
+    """
+    data = request.get_json(force=True)
+    fields = {k: data[k] for k in CLAIM_WRITABLE if k in data}
+    if "claimant_name" not in fields:
+        return jsonify({"error": "claimant_name is required"}), 400
+    fields, err = _validate_claim(fields)
+    if err:
+        return jsonify({"error": err}), 400
+
+    cols = ", ".join(fields.keys())
+    placeholders = ", ".join("?" for _ in fields)
+    db = get_db()
+    try:
+        cur = db.execute(
+            f"INSERT INTO bankruptcy_claims ({cols}) VALUES ({placeholders})",
+            list(fields.values()),
+        )
+    except sqlite3.IntegrityError as e:
+        return jsonify({"error": str(e)}), 400
+    db.commit()
+    row = db.execute("SELECT * FROM bankruptcy_claims WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return jsonify(dict(row)), 201
+
+
+@app.route("/api/claims/<int:claim_id>", methods=["GET"])
+@require_auth
+def get_claim(claim_id):
+    row = get_db().execute(
+        "SELECT * FROM bankruptcy_claims WHERE id = ?", (claim_id,)
+    ).fetchone()
+    if row is None:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(dict(row))
+
+
+@app.route("/api/claims/<int:claim_id>", methods=["PUT"])
+@require_auth
+def update_claim(claim_id):
+    """Update a claim — advance status, record recovery details, link asset.
+
+    To mark a claim recovered:
+      { "status": "recovered", "recovered_value": "5000.00",
+        "recovery_date": "2025-04-09", "recovered_asset_id": 42 }
+    """
+    db = get_db()
+    if db.execute("SELECT id FROM bankruptcy_claims WHERE id = ?", (claim_id,)).fetchone() is None:
+        return jsonify({"error": "Not found"}), 404
+
+    data = request.get_json(force=True)
+    fields = {k: data[k] for k in CLAIM_WRITABLE if k in data}
+    if not fields:
+        return jsonify({"error": "No valid fields provided"}), 400
+    fields, err = _validate_claim(fields)
+    if err:
+        return jsonify({"error": err}), 400
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    set_clause += ", updated_at = datetime('now')"
+    db.execute(
+        f"UPDATE bankruptcy_claims SET {set_clause} WHERE id = ?",
+        list(fields.values()) + [claim_id],
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM bankruptcy_claims WHERE id = ?", (claim_id,)).fetchone()
+    return jsonify(dict(row))
+
+
+@app.route("/api/claims/summary", methods=["GET"])
+@require_auth
+def claims_summary():
+    """Return bankruptcy_summary view — totals grouped by claimant, status, source."""
+    rows = get_db().execute("SELECT * FROM bankruptcy_summary ORDER BY claimant_name, status").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+# ---------------------------------------------------------------------------
 # Portfolio summary — crypto + equities + all holdings grouped by category
 # ---------------------------------------------------------------------------
 
