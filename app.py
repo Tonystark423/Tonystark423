@@ -30,6 +30,14 @@ WRITABLE_COLUMNS = [c for c in COLUMNS if c not in ("id", "created_at", "updated
 
 ASSET_NAME_MAX_LENGTH = 100
 
+# Batch signing log columns
+SIGNING_COLUMNS = [
+    "id", "batch_ref", "asset_category", "signer", "num_items",
+    "total_value", "currency", "status", "notes", "signed_at",
+    "created_at", "updated_at",
+]
+SIGNING_WRITABLE = [c for c in SIGNING_COLUMNS if c not in ("id", "created_at", "updated_at")]
+
 
 def validate_fields(fields: dict) -> tuple[dict, str | None]:
     """
@@ -504,6 +512,339 @@ def sync_starkbank():
         return jsonify({"error": str(exc)}), 502
 
     return jsonify({"inserted": inserted, "skipped": skipped})
+
+
+# ---------------------------------------------------------------------------
+# Bankruptcy claims
+# ---------------------------------------------------------------------------
+
+CLAIM_COLUMNS = [
+    "id", "claimant_name", "case_number", "court", "trustee_name",
+    "trustee_contact", "source", "claim_type", "claimed_value",
+    "recovered_value", "currency", "status", "recovered_asset_id",
+    "filing_date", "recovery_date", "notes", "created_at", "updated_at",
+]
+CLAIM_WRITABLE = [c for c in CLAIM_COLUMNS if c not in ("id", "created_at", "updated_at")]
+
+
+def _validate_claim(fields: dict) -> tuple[dict, str | None]:
+    for money_field in ("claimed_value", "recovered_value"):
+        if money_field in fields and fields[money_field] is not None:
+            try:
+                val = Decimal(str(fields[money_field]))
+            except InvalidOperation:
+                return fields, f"{money_field} must be a number"
+            if val < 0:
+                return fields, f"{money_field} cannot be negative"
+            fields[money_field] = str(val.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+    if "claimant_name" in fields and fields["claimant_name"] is not None:
+        fields["claimant_name"] = str(fields["claimant_name"]).strip()
+        if not fields["claimant_name"]:
+            return fields, "claimant_name cannot be blank"
+
+    return fields, None
+
+
+@app.route("/api/claims", methods=["GET"])
+@require_auth
+def list_claims():
+    """List bankruptcy claims.
+
+    Query params:
+      claimant   filter by claimant_name (partial, case-insensitive)
+      status     identified / filed / pending_recovery / recovered / closed
+      source     PACER / State Unclaimed Property / ...
+      limit      max rows (default 200, max 1000)
+      offset     pagination offset
+    """
+    db = get_db()
+    sql = "SELECT * FROM bankruptcy_claims WHERE 1=1"
+    params: list = []
+
+    claimant = request.args.get("claimant", "").strip()
+    status   = request.args.get("status",   "").strip()
+    source   = request.args.get("source",   "").strip()
+    limit    = min(int(request.args.get("limit",  200)), 1000)
+    offset   = int(request.args.get("offset", 0))
+
+    if claimant:
+        sql += " AND claimant_name LIKE ?"
+        params.append(f"%{claimant}%")
+    if status:
+        sql += " AND status = ?"
+        params.append(status)
+    if source:
+        sql += " AND source = ?"
+        params.append(source)
+
+    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+    rows = db.execute(sql, params).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/claims", methods=["POST"])
+@require_auth
+def create_claim():
+    """Record a new bankruptcy claim.
+
+    Required JSON body: claimant_name
+    Optional: case_number, court, trustee_name, trustee_contact, source,
+              claim_type, claimed_value, currency, status, filing_date, notes
+    """
+    data = request.get_json(force=True)
+    fields = {k: data[k] for k in CLAIM_WRITABLE if k in data}
+    if "claimant_name" not in fields:
+        return jsonify({"error": "claimant_name is required"}), 400
+    fields, err = _validate_claim(fields)
+    if err:
+        return jsonify({"error": err}), 400
+
+    cols = ", ".join(fields.keys())
+    placeholders = ", ".join("?" for _ in fields)
+    db = get_db()
+    try:
+        cur = db.execute(
+            f"INSERT INTO bankruptcy_claims ({cols}) VALUES ({placeholders})",
+            list(fields.values()),
+        )
+    except sqlite3.IntegrityError as e:
+        return jsonify({"error": str(e)}), 400
+    db.commit()
+    row = db.execute("SELECT * FROM bankruptcy_claims WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return jsonify(dict(row)), 201
+
+
+@app.route("/api/claims/<int:claim_id>", methods=["GET"])
+@require_auth
+def get_claim(claim_id):
+    row = get_db().execute(
+        "SELECT * FROM bankruptcy_claims WHERE id = ?", (claim_id,)
+    ).fetchone()
+    if row is None:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(dict(row))
+
+
+@app.route("/api/claims/<int:claim_id>", methods=["PUT"])
+@require_auth
+def update_claim(claim_id):
+    """Update a claim — advance status, record recovery details, link asset.
+
+    To mark a claim recovered:
+      { "status": "recovered", "recovered_value": "5000.00",
+        "recovery_date": "2025-04-09", "recovered_asset_id": 42 }
+    """
+    db = get_db()
+    if db.execute("SELECT id FROM bankruptcy_claims WHERE id = ?", (claim_id,)).fetchone() is None:
+        return jsonify({"error": "Not found"}), 404
+
+    data = request.get_json(force=True)
+    fields = {k: data[k] for k in CLAIM_WRITABLE if k in data}
+    if not fields:
+        return jsonify({"error": "No valid fields provided"}), 400
+    fields, err = _validate_claim(fields)
+    if err:
+        return jsonify({"error": err}), 400
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    set_clause += ", updated_at = datetime('now')"
+    db.execute(
+        f"UPDATE bankruptcy_claims SET {set_clause} WHERE id = ?",
+        list(fields.values()) + [claim_id],
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM bankruptcy_claims WHERE id = ?", (claim_id,)).fetchone()
+    return jsonify(dict(row))
+
+
+@app.route("/api/claims/summary", methods=["GET"])
+@require_auth
+def claims_summary():
+    """Return bankruptcy_summary view — totals grouped by claimant, status, source."""
+    rows = get_db().execute("SELECT * FROM bankruptcy_summary ORDER BY claimant_name, status").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+# ---------------------------------------------------------------------------
+# Portfolio summary — crypto + equities + all holdings grouped by category
+# ---------------------------------------------------------------------------
+
+@app.route("/api/portfolio/summary", methods=["GET"])
+@require_auth
+def portfolio_summary():
+    """Return holdings grouped by category, subcategory, status, and owner.
+
+    Optional query params:
+      owner     filter by beneficial_owner (e.g. 'All-Star Financial Holdings')
+      category  filter by asset category
+      status    filter by asset status (active / sold / pending)
+
+    Response (200):
+      [
+        { "category": "Cryptocurrency", "subcategory": "BTC", "status": "active",
+          "beneficial_owner": "All-Star Financial Holdings",
+          "asset_count": 3, "total_value_usd": 125000.0, "unit": "BTC" },
+        ...
+      ]
+    """
+    db = get_db()
+    sql = "SELECT * FROM portfolio_summary WHERE 1=1"
+    params: list = []
+
+    owner = request.args.get("owner", "").strip()
+    category = request.args.get("category", "").strip()
+    status = request.args.get("status", "").strip()
+
+    if owner:
+        sql += " AND beneficial_owner = ?"
+        params.append(owner)
+    if category:
+        sql += " AND category = ?"
+        params.append(category)
+    if status:
+        sql += " AND status = ?"
+        params.append(status)
+
+    sql += " ORDER BY category, subcategory"
+    rows = db.execute(sql, params).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+# ---------------------------------------------------------------------------
+# Batch signing log
+# ---------------------------------------------------------------------------
+
+def _validate_signing(fields: dict) -> tuple[dict, str | None]:
+    """Validate writable batch_signings fields."""
+    if "total_value" in fields and fields["total_value"] is not None:
+        try:
+            val = Decimal(str(fields["total_value"]))
+        except InvalidOperation:
+            return fields, "total_value must be a number"
+        if val <= 0:
+            return fields, "total_value must be greater than zero"
+        fields["total_value"] = str(val.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+    if "num_items" in fields and fields["num_items"] is not None:
+        try:
+            n = int(fields["num_items"])
+        except (TypeError, ValueError):
+            return fields, "num_items must be an integer"
+        if n < 0:
+            return fields, "num_items cannot be negative"
+        fields["num_items"] = n
+
+    if "batch_ref" in fields and fields["batch_ref"] is not None:
+        fields["batch_ref"] = str(fields["batch_ref"]).strip()
+        if not fields["batch_ref"]:
+            return fields, "batch_ref cannot be blank"
+
+    return fields, None
+
+
+@app.route("/api/signings", methods=["GET"])
+@require_auth
+def list_signings():
+    """List batch signing records.
+
+    Query params:
+      status         pending / signed / failed / cancelled
+      asset_category Cryptocurrency / Securities & Commodities / ...
+      limit          max rows (default 200, max 1000)
+      offset         pagination offset
+    """
+    db = get_db()
+    sql = "SELECT * FROM batch_signings WHERE 1=1"
+    params: list = []
+
+    status = request.args.get("status", "").strip()
+    category = request.args.get("asset_category", "").strip()
+    limit = min(int(request.args.get("limit", 200)), 1000)
+    offset = int(request.args.get("offset", 0))
+
+    if status:
+        sql += " AND status = ?"
+        params.append(status)
+    if category:
+        sql += " AND asset_category = ?"
+        params.append(category)
+
+    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
+    rows = db.execute(sql, params).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/signings", methods=["POST"])
+@require_auth
+def create_signing():
+    """Record a new batch signing event.
+
+    Required JSON body fields: batch_ref
+    Optional: asset_category, signer, num_items, total_value, currency,
+              status, notes, signed_at
+    """
+    data = request.get_json(force=True)
+    fields = {k: data[k] for k in SIGNING_WRITABLE if k in data}
+    if "batch_ref" not in fields:
+        return jsonify({"error": "batch_ref is required"}), 400
+    fields, err = _validate_signing(fields)
+    if err:
+        return jsonify({"error": err}), 400
+
+    cols = ", ".join(fields.keys())
+    placeholders = ", ".join("?" for _ in fields)
+    db = get_db()
+    try:
+        cur = db.execute(
+            f"INSERT INTO batch_signings ({cols}) VALUES ({placeholders})",
+            list(fields.values()),
+        )
+    except sqlite3.IntegrityError as e:
+        return jsonify({"error": str(e)}), 400
+    db.commit()
+    row = db.execute("SELECT * FROM batch_signings WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return jsonify(dict(row)), 201
+
+
+@app.route("/api/signings/<int:signing_id>", methods=["GET"])
+@require_auth
+def get_signing(signing_id):
+    row = get_db().execute(
+        "SELECT * FROM batch_signings WHERE id = ?", (signing_id,)
+    ).fetchone()
+    if row is None:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(dict(row))
+
+
+@app.route("/api/signings/<int:signing_id>", methods=["PUT"])
+@require_auth
+def update_signing(signing_id):
+    """Update a batch signing record (e.g. advance status from pending -> signed)."""
+    db = get_db()
+    if db.execute("SELECT id FROM batch_signings WHERE id = ?", (signing_id,)).fetchone() is None:
+        return jsonify({"error": "Not found"}), 404
+
+    data = request.get_json(force=True)
+    fields = {k: data[k] for k in SIGNING_WRITABLE if k in data}
+    if not fields:
+        return jsonify({"error": "No valid fields provided"}), 400
+    fields, err = _validate_signing(fields)
+    if err:
+        return jsonify({"error": err}), 400
+
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    set_clause += ", updated_at = datetime('now')"
+    db.execute(
+        f"UPDATE batch_signings SET {set_clause} WHERE id = ?",
+        list(fields.values()) + [signing_id],
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM batch_signings WHERE id = ?", (signing_id,)).fetchone()
+    return jsonify(dict(row))
 
 
 if __name__ == "__main__":
