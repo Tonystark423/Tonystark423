@@ -19,47 +19,101 @@
   </header>
 
   <main>
-    <div class="toolbar">
-      <input type="search" id="searchInput" placeholder="Search assets…" autocomplete="off">
-      <select id="categoryFilter">
-        <option value="">All Categories</option>
-        <option value="Proprietary IP">Proprietary IP</option>
-        <option value="Computer Resources">Computer Resources</option>
-        <option value="Money Market Funds">Money Market Funds</option>
-        <option value="Securities &amp; Commodities">Securities &amp; Commodities</option>
-        <option value="Cryptocurrency">Cryptocurrency</option>
-      </select>
-      <select id="statusFilter">
-        <option value="">All Statuses</option>
-        <option value="active">Active</option>
-        <option value="pending">Pending</option>
-        <option value="sold">Sold</option>
-      </select>
-    </div>
+    <nav class="tab-bar">
+      <button class="tab-btn active" data-tab="assets">Assets</button>
+      <button class="tab-btn" data-tab="meals">Meal Planning</button>
+      <button class="tab-btn" data-tab="tax">Tax Filing</button>
+    </nav>
 
-    <div class="table-wrap">
-      <table id="assetsTable">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Category</th>
-            <th>Subcategory</th>
-            <th>Value (USD)</th>
-            <th>Quantity</th>
-            <th>Custodian</th>
-            <th>Status</th>
-            <th>Acquired</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="assetsBody">
-          <tr><td colspan="9" class="empty">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <!-- ===== Assets Section ===== -->
+    <section id="section-assets" class="tab-section">
+      <div class="toolbar">
+        <input type="search" id="searchInput" placeholder="Search assets…" autocomplete="off">
+        <select id="categoryFilter">
+          <option value="">All Categories</option>
+          <option value="Proprietary IP">Proprietary IP</option>
+          <option value="Computer Resources">Computer Resources</option>
+          <option value="Money Market Funds">Money Market Funds</option>
+          <option value="Securities &amp; Commodities">Securities &amp; Commodities</option>
+          <option value="Cryptocurrency">Cryptocurrency</option>
+        </select>
+        <select id="statusFilter">
+          <option value="">All Statuses</option>
+          <option value="active">Active</option>
+          <option value="pending">Pending</option>
+          <option value="sold">Sold</option>
+        </select>
+      </div>
+
+      <div class="table-wrap">
+        <table id="assetsTable">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Category</th>
+              <th>Subcategory</th>
+              <th>Value (USD)</th>
+              <th>Quantity</th>
+              <th>Custodian</th>
+              <th>Status</th>
+              <th>Acquired</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="assetsBody">
+            <tr><td colspan="9" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== Meal Planning Section ===== -->
+    <section id="section-meals" class="tab-section hidden">
+      <div class="toolbar">
+        <button id="addMealBtn" class="btn btn-primary">+ Add Meal</button>
+        <button id="suggestMealBtn" class="btn btn-secondary">What can we eat?</button>
+        <select id="mealCategoryFilter">
+          <option value="">All Categories</option>
+          <option value="business">Business</option>
+          <option value="personal">Personal</option>
+          <option value="general">General</option>
+        </select>
+      </div>
+
+      <div id="mealBudgetBanner" class="budget-banner hidden"></div>
+
+      <div class="table-wrap">
+        <table id="mealsTable">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Cuisine</th>
+              <th>Category</th>
+              <th>Est. Cost (USD)</th>
+              <th>Notes</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="mealsBody">
+            <tr><td colspan="6" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== Tax Filing Section ===== -->
+    <section id="section-tax" class="tab-section hidden">
+      <div class="toolbar">
+        <button id="refreshTaxBtn" class="btn btn-secondary">Refresh Summary</button>
+        <button id="fileTaxBtn" class="btn btn-primary">Download Tax Filing</button>
+      </div>
+      <div id="taxSummaryContent">
+        <p class="empty" style="padding:40px 0;">Click <strong>Refresh Summary</strong> to compute your tax summary.</p>
+      </div>
+    </section>
   </main>
 
-  <!-- Modal -->
+  <!-- ===== Asset Modal ===== -->
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-backdrop"></div>
     <div class="modal-box">
@@ -146,6 +200,60 @@
         <div class="modal-footer">
           <button type="button" id="cancelBtn" class="btn btn-secondary">Cancel</button>
           <button type="submit" id="saveBtn" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== Meal Modal ===== -->
+  <div id="mealModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mealModalTitle">
+    <div class="modal-backdrop" id="mealModalBackdrop"></div>
+    <div class="modal-box">
+      <h2 id="mealModalTitle">Add Meal</h2>
+      <form id="mealForm" novalidate>
+        <input type="hidden" id="mealId">
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="fm_name">Meal Name <span class="req">*</span></label>
+            <input type="text" id="fm_name" name="name" required>
+          </div>
+          <div class="form-group">
+            <label for="fm_meal_category">Category</label>
+            <select id="fm_meal_category" name="meal_category">
+              <option value="general">General</option>
+              <option value="business">Business</option>
+              <option value="personal">Personal</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="fm_cuisine_type">Cuisine</label>
+            <input type="text" id="fm_cuisine_type" name="cuisine_type" placeholder="e.g. Italian, Japanese">
+          </div>
+          <div class="form-group">
+            <label for="fm_estimated_cost">Estimated Cost (USD)</label>
+            <input type="number" id="fm_estimated_cost" name="estimated_cost" step="any" min="0">
+          </div>
+        </div>
+
+        <div class="form-group full">
+          <label for="fm_description">Description</label>
+          <textarea id="fm_description" name="description" rows="2"></textarea>
+        </div>
+
+        <div class="form-group full">
+          <label for="fm_notes">Notes</label>
+          <textarea id="fm_notes" name="notes" rows="2"></textarea>
+        </div>
+
+        <div id="mealFormError" class="form-error hidden"></div>
+
+        <div class="modal-footer">
+          <button type="button" id="cancelMealBtn" class="btn btn-secondary">Cancel</button>
+          <button type="submit" id="saveMealBtn" class="btn btn-primary">Save</button>
         </div>
       </form>
     </div>

@@ -472,6 +472,242 @@ def report_budget():
     return jsonify({"summary": summary, "items": items})
 
 
+# ---------------------------------------------------------------------------
+# Tax Filing — "Tax Hack"
+# ---------------------------------------------------------------------------
+
+@app.route("/api/tax/summary", methods=["GET"])
+@require_auth
+def tax_summary():
+    """Return a JSON tax summary computed from existing assets.
+
+    Query params:
+      year  int — tax year label (default: current calendar year)
+
+    Response 200:
+      {
+        "tax_year": 2025,
+        "generated_at": "...",
+        "disclaimer": "...",
+        "capital_gains": [...],
+        "deductions": [...],
+        "hacks": [...],
+        "summary": { ... }
+      }
+    """
+    try:
+        from tax_engine import generate_tax_report
+    except ImportError:
+        return jsonify({"error": "tax_engine module not available"}), 503
+
+    import datetime as _dt
+    year = int(request.args.get("year", _dt.date.today().year))
+    report = generate_tax_report(get_db(), tax_year=year)
+    return jsonify(report)
+
+
+@app.route("/api/tax/file", methods=["POST"])
+@require_auth
+def tax_file():
+    """Generate and download a tax filing document (JSON).
+
+    Optional JSON body:
+      { "year": 2025, "entity_name": "...", "preparer": "..." }
+
+    Response 200: application/json attachment
+    """
+    try:
+        from tax_engine import generate_tax_report
+    except ImportError:
+        return jsonify({"error": "tax_engine module not available"}), 503
+
+    import json as _json
+    import datetime as _dt
+
+    data = request.get_json(silent=True) or {}
+    year        = int(data.get("year", _dt.date.today().year))
+    entity_name = data.get("entity_name", "Stark Financial Holdings LLC")
+    preparer    = data.get("preparer", "")
+
+    report = generate_tax_report(get_db(), tax_year=year)
+    report["filing_metadata"] = {
+        "entity_name": entity_name,
+        "preparer":    preparer,
+        "filed_at":    _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "status":      "draft",
+    }
+
+    filename = f"stark_tax_filing_{year}.json"
+    return Response(
+        _json.dumps(report, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Meal Planning
+# ---------------------------------------------------------------------------
+
+MEAL_WRITABLE = ["name", "description", "estimated_cost", "cuisine_type", "meal_category", "notes"]
+
+
+@app.route("/api/meals", methods=["GET"])
+@require_auth
+def list_meals():
+    """List all meals. Optional filter: ?category=business|personal|general"""
+    db = get_db()
+    cat = request.args.get("category", "").strip()
+    if cat:
+        rows = db.execute(
+            "SELECT * FROM meals WHERE meal_category = ? ORDER BY created_at DESC", (cat,)
+        ).fetchall()
+    else:
+        rows = db.execute("SELECT * FROM meals ORDER BY created_at DESC").fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/meals", methods=["POST"])
+@require_auth
+def create_meal():
+    """Create a meal record.
+
+    Required: name
+    Optional: description, estimated_cost (> 0), cuisine_type,
+              meal_category (business|personal|general, default: general), notes
+
+    Response 201: created meal dict
+    Response 400: validation error
+    """
+    data = request.get_json(force=True)
+    name = str(data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+
+    estimated_cost = data.get("estimated_cost")
+    if estimated_cost is not None:
+        try:
+            cost_d = Decimal(str(estimated_cost))
+        except InvalidOperation:
+            return jsonify({"error": "estimated_cost must be a number"}), 400
+        if cost_d <= 0:
+            return jsonify({"error": "estimated_cost must be greater than zero"}), 400
+        estimated_cost = str(cost_d.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP))
+
+    fields = {k: data.get(k) for k in MEAL_WRITABLE if k in data}
+    fields["name"] = name
+    if estimated_cost is not None:
+        fields["estimated_cost"] = estimated_cost
+
+    cols = ", ".join(fields.keys())
+    placeholders = ", ".join("?" for _ in fields)
+    db = get_db()
+    try:
+        cur = db.execute(
+            f"INSERT INTO meals ({cols}) VALUES ({placeholders})",
+            list(fields.values()),
+        )
+    except sqlite3.IntegrityError as e:
+        return jsonify({"error": str(e)}), 400
+    db.commit()
+    row = db.execute("SELECT * FROM meals WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return jsonify(dict(row)), 201
+
+
+# NOTE: /api/meals/suggestions must be registered BEFORE /api/meals/<int:meal_id>
+# so Flask does not attempt to cast "suggestions" as int.
+@app.route("/api/meals/suggestions", methods=["GET"])
+@require_auth
+def meal_suggestions():
+    """Return meals affordable within the remaining Travel budget.
+
+    Query params:
+      limit  int — max suggestions to return (default: 10, max: 100)
+
+    Response 200:
+      {
+        "budget_remaining": 1800.50,
+        "currency": "USD",
+        "suggestions": [...]
+      }
+    """
+    try:
+        from ledger_processor import categorize_transaction, check_budgets, BUDGET_LIMITS
+    except ImportError:
+        return jsonify({"error": "ledger_processor not available"}), 503
+
+    import pandas as _pd
+
+    try:
+        limit = min(int(request.args.get("limit", 10)), 100)
+    except (ValueError, TypeError):
+        return jsonify({"error": "limit must be an integer"}), 400
+
+    db = get_db()
+
+    # Start with the full Travel budget as the default remaining amount
+    budget_remaining = Decimal(str(BUDGET_LIMITS.get("Travel", 2500.0)))
+
+    # Adjust for actual travel spend in the ledger
+    all_rows = db.execute(
+        "SELECT description, estimated_value, subcategory FROM assets"
+    ).fetchall()
+    if all_rows:
+        import pandas as _pd
+        df = _pd.DataFrame([dict(r) for r in all_rows])
+        df["Amount"] = _pd.to_numeric(df["estimated_value"], errors="coerce").fillna(0.0)
+        df["Type"] = df["subcategory"].fillna("").apply(
+            lambda s: "Expense" if any(k in s.lower() for k in ("debit", "expense")) else "Income"
+        )
+        df["Category"] = df["description"].fillna("").apply(categorize_transaction)
+        budget_items = check_budgets(df, type_col="Type", category_col="Category", amount_col="Amount")
+        travel_item = next((i for i in budget_items if i["category"] == "Travel"), None)
+        if travel_item:
+            budget_remaining = Decimal(str(travel_item["variance"]))
+
+    # Fetch meals and filter by cost in Python (preserves Decimal precision)
+    meal_rows = db.execute(
+        "SELECT * FROM meals WHERE estimated_cost IS NOT NULL ORDER BY CAST(estimated_cost AS REAL) ASC"
+    ).fetchall()
+
+    suggestions = []
+    for row in meal_rows:
+        try:
+            cost = Decimal(str(row["estimated_cost"]))
+        except InvalidOperation:
+            continue
+        if cost <= budget_remaining:
+            suggestions.append(dict(row))
+        if len(suggestions) >= limit:
+            break
+
+    return jsonify({
+        "budget_remaining": float(budget_remaining.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
+        "currency": "USD",
+        "suggestions": suggestions,
+    })
+
+
+@app.route("/api/meals/<int:meal_id>", methods=["GET"])
+@require_auth
+def get_meal(meal_id):
+    row = get_db().execute("SELECT * FROM meals WHERE id = ?", (meal_id,)).fetchone()
+    if row is None:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(dict(row))
+
+
+@app.route("/api/meals/<int:meal_id>", methods=["DELETE"])
+@require_auth
+def delete_meal(meal_id):
+    db = get_db()
+    if db.execute("SELECT id FROM meals WHERE id = ?", (meal_id,)).fetchone() is None:
+        return jsonify({"error": "Not found"}), 404
+    db.execute("DELETE FROM meals WHERE id = ?", (meal_id,))
+    db.commit()
+    return "", 204
+
+
 @app.route("/api/sync/starkbank", methods=["POST"])
 @require_auth
 def sync_starkbank():
