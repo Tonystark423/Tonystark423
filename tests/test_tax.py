@@ -154,6 +154,38 @@ class TestTaxEngineUnit:
         assert gains[0]["gain_type"] == "short_term"
         conn.close()
 
+    def test_get_capital_gains_exactly_365_days_is_short_term(self):
+        """Exactly 365 days held is NOT 'more than one year' — must be short_term."""
+        from tax_engine import get_capital_gains
+        conn = self._make_conn()
+        acq = (date.today() - timedelta(days=365)).isoformat()
+        conn.execute(
+            "INSERT INTO assets (asset_name, category, estimated_value, acquisition_date, status) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("Boundary365", "Cryptocurrency", "1000.0000", acq, "sold"),
+        )
+        conn.commit()
+        gains = get_capital_gains(conn)
+        assert gains[0]["gain_type"] == "short_term", (
+            "365 days is not 'more than one year'; IRS requires strictly > 365 days for long-term"
+        )
+        conn.close()
+
+    def test_get_capital_gains_366_days_is_long_term(self):
+        """366 days held qualifies as 'more than one year' — must be long_term."""
+        from tax_engine import get_capital_gains
+        conn = self._make_conn()
+        acq = (date.today() - timedelta(days=366)).isoformat()
+        conn.execute(
+            "INSERT INTO assets (asset_name, category, estimated_value, acquisition_date, status) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("Boundary366", "Securities & Commodities", "1000.0000", acq, "sold"),
+        )
+        conn.commit()
+        gains = get_capital_gains(conn)
+        assert gains[0]["gain_type"] == "long_term"
+        conn.close()
+
     def test_get_capital_gains_missing_date_defaults_short_term(self):
         """Missing acquisition_date → conservative short_term classification."""
         from tax_engine import get_capital_gains

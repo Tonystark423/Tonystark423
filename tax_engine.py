@@ -25,7 +25,7 @@ _ST_RATE = Decimal("0.37")
 # Net investment income tax (NIIT) rate
 _NIIT_RATE = Decimal("0.038")
 
-# Assets held ≥ 1 year qualify for long-term treatment
+# IRS: "more than 1 year" = strictly greater than 365 days for long-term treatment
 _LT_HOLDING_DAYS = 365
 
 # Section 179 deduction limit (2025)
@@ -78,7 +78,7 @@ def get_capital_gains(conn) -> list[dict]:
     for row in rows:
         proceeds = _to_decimal(row["estimated_value"])
         days = _holding_days(row["acquisition_date"])
-        if days is not None and days >= _LT_HOLDING_DAYS:
+        if days is not None and days > _LT_HOLDING_DAYS:
             gain_type = "long_term"
             rate = _LT_RATE
         else:
