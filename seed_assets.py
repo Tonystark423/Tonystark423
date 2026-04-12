@@ -201,6 +201,117 @@ ASSETS = [
         "status":           "active",
         "notes":            "Held > 365 days. Long-term rate applies on disposal.",
     },
+    # ── Ground Transportation Fleet ───────────────────────────────────────
+    {
+        "asset_name":       "Cadillac Escalade ESV Stretch — Fleet #1",
+        "category":         "Securities & Commodities",
+        "subcategory":      "Ground Transportation",
+        "description":      (
+            "Custom 6-door stretch Cadillac Escalade ESV. 140-inch stretch. "
+            "Seats 14. Airport transfer and executive ground transport service "
+            "between Teterboro (KTEB) and Stark Financial HQ, Midtown Manhattan. "
+            "GVWR 8,600 lbs — exceeds 6,000 lb threshold; exempt from luxury "
+            "auto depreciation caps."
+        ),
+        "quantity":         "1",
+        "unit":             "vehicle",
+        "estimated_value":  "95000.0000",
+        "acquisition_date": "2024-06-15",
+        "custodian":        "Stark Transport LLC",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "GVWR > 6,000 lbs. Section 179 eligible (heavy SUV). 100% business use.",
+    },
+    {
+        "asset_name":       "Cadillac Escalade ESV Super-Stretch Limo — Airport Shuttle",
+        "category":         "Securities & Commodities",
+        "subcategory":      "Ground Transportation",
+        "description":      (
+            "Commercial-grade 8-door super-stretch Escalade ESV limousine. "
+            "180-inch stretch, seats 20. Dedicated airport shuttle — Teterboro, "
+            "JFK, and EWR to Stark Financial HQ. Overweight vehicle: "
+            "GVWR 11,200 lbs; requires commercial operator licence. "
+            "Exempt from luxury auto depreciation limits under IRC §179(b)(5)."
+        ),
+        "quantity":         "1",
+        "unit":             "vehicle",
+        "estimated_value":  "235000.0000",
+        "acquisition_date": "2025-03-10",
+        "custodian":        "Stark Transport LLC",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            (
+            "GVWR 11,200 lbs — over weight limit; full cost expensable under "
+            "OBBBA 100% bonus depreciation (placed in service post-1/19/2025). "
+            "Commercial vehicle licence on file."
+        ),
+    },
+    {
+        "asset_name":       "Cadillac CT6 Stretch Limousine",
+        "category":         "Securities & Commodities",
+        "subcategory":      "Ground Transportation",
+        "description":      (
+            "6-door stretch Cadillac CT6 limousine. 120-inch stretch, seats 10. "
+            "VIP executive ground transport. Cream interior, privacy partition, "
+            "starlight headliner. GVWR 7,100 lbs."
+        ),
+        "quantity":         "1",
+        "unit":             "vehicle",
+        "estimated_value":  "185000.0000",
+        "acquisition_date": "2025-02-28",
+        "custodian":        "Stark Transport LLC",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            (
+            "GVWR > 6,000 lbs — exempt from luxury auto caps. "
+            "OBBBA 100% bonus depreciation eligible (placed in service post-1/19/2025)."
+        ),
+    },
+    {
+        "asset_name":       "Rolls-Royce Spectre",
+        "category":         "Securities & Commodities",
+        "subcategory":      "Executive Transport",
+        "description":      (
+            "Rolls-Royce Spectre ultra-luxury electric coupe. "
+            "577 hp dual-motor, 0-60 in 4.4 s. Range 260 mi. "
+            "Bespoke Commissioners Black exterior, Seashell leather, "
+            "starlight headliner with 1,340 fibre-optic stars. "
+            "GVWR 6,834 lbs. Personal use of CEO / executive principals."
+        ),
+        "quantity":         "1",
+        "unit":             "vehicle",
+        "estimated_value":  "420000.0000",
+        "acquisition_date": "2025-01-30",
+        "custodian":        "Stark Transport LLC",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            (
+            "GVWR 6,834 lbs — exceeds 6,000 lb threshold; qualifies for heavy-vehicle "
+            "Section 179 and OBBBA 100% bonus depreciation (placed in service post-1/19/2025). "
+            "Mixed business/personal use — apportion depreciation to business-use %."
+        ),
+    },
+    {
+        "asset_name":       "Tesla Model S Plaid",
+        "category":         "Securities & Commodities",
+        "subcategory":      "Executive Transport",
+        "description":      (
+            "Tesla Model S Plaid. 1,020 hp tri-motor, 0-60 in 1.99 s. "
+            "Range 396 mi. Midnight Silver Metallic. Executive daily driver. "
+            "GVWR 4,961 lbs — standard passenger vehicle for depreciation purposes."
+        ),
+        "quantity":         "1",
+        "unit":             "vehicle",
+        "estimated_value":  "89990.0000",
+        "acquisition_date": "2024-11-20",
+        "custodian":        "Stark Transport LLC",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            (
+            "GVWR < 6,000 lbs — subject to luxury auto depreciation limits (~$12,400 yr-1 "
+            "under prior law). OBBBA bonus dep may apply; consult tax adviser re listed-property rules."
+        ),
+    },
 ]
 
 # ---------------------------------------------------------------------------

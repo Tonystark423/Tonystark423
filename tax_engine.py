@@ -44,8 +44,19 @@ _SEC199A_RATE       = Decimal("0.23")
 # QOZ incentives extended through 2034
 _QOZ_EXTENDED_YEAR  = 2034
 
-# Categories eligible for Section 179 / bonus depreciation
+# Categories eligible for Section 179 / bonus depreciation (equipment)
 _SEC179_CATEGORIES = {"Computer Resources", "Proprietary IP"}
+
+# Heavy vehicle detection — vehicles with GVWR > 6,000 lbs are exempt from
+# luxury-auto depreciation caps and qualify for Section 179 / bonus dep.
+# Detected via subcategory AND notes keywords written by seed_assets.py.
+_HEAVY_VEHICLE_SUBCATS   = {"Ground Transportation", "Executive Transport"}
+_HEAVY_VEHICLE_NOTE_KEYS = (
+    "GVWR > 6,000",
+    "exceeds 6,000",
+    "over weight limit",
+    "exempt from luxury",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -119,18 +130,39 @@ def get_capital_gains(conn) -> list[dict]:
 def get_deductions(conn) -> list[dict]:
     """Return deduction opportunities from active assets.
 
-    Strategy (OBBBA-optimal):
-      1. Section 179 — apply to oldest qualifying assets first, up to $2,500,000.
-      2. 100% Bonus Depreciation — apply to any remaining basis on qualifying assets
-         placed in service after _BONUS_DEP_CUTOFF (2025-01-19). No dollar cap.
+    Qualifying assets (processed oldest-first to maximise Section 179 on pre-cutoff
+    assets, leaving post-cutoff assets free for unlimited bonus depreciation):
 
-    Ordering oldest-first maximises Section 179 on pre-cutoff assets, leaving
-    post-cutoff assets free to take the unlimited bonus depreciation route.
+      Equipment  — category in _SEC179_CATEGORIES (Computer Resources, Proprietary IP)
+      Heavy veh. — subcategory in _HEAVY_VEHICLE_SUBCATS AND notes signal GVWR > 6,000 lbs
+                   (exempt from luxury-auto caps under IRC §179; Tesla Model S excluded)
+
+    Strategy (OBBBA-optimal):
+      1. Section 179 — shared $2,500,000 cap across all qualifying asset types.
+      2. 100% Bonus Depreciation — unlimited, for assets placed in service after
+         _BONUS_DEP_CUTOFF (2025-01-19). No dollar cap.
     """
+    note_filter = " OR ".join(
+        f"COALESCE(notes,'') LIKE ?" for _ in _HEAVY_VEHICLE_NOTE_KEYS
+    )
+    subcat_filter = ",".join("?" for _ in _HEAVY_VEHICLE_SUBCATS)
+
     rows = conn.execute(
-        "SELECT id, asset_name, category, subcategory, estimated_value, acquisition_date "
-        "FROM assets WHERE status IN ('active', 'pending') "
-        "ORDER BY acquisition_date ASC, asset_name"   # oldest first → max Sec 179 on pre-cutoff
+        f"""
+        SELECT id, asset_name, category, subcategory, estimated_value, acquisition_date, notes
+        FROM assets
+        WHERE status IN ('active', 'pending')
+          AND (
+            category IN ({",".join("?" for _ in _SEC179_CATEGORIES)})
+            OR (
+              subcategory IN ({subcat_filter})
+              AND ({note_filter})
+            )
+          )
+        ORDER BY acquisition_date ASC, asset_name
+        """,
+        [*_SEC179_CATEGORIES, *_HEAVY_VEHICLE_SUBCATS,
+         *[f"%{k}%" for k in _HEAVY_VEHICLE_NOTE_KEYS]],
     ).fetchall()
 
     deductions = []
@@ -142,11 +174,12 @@ def get_deductions(conn) -> list[dict]:
             continue
 
         category  = row["category"] or ""
+        subcat    = row["subcategory"] or ""
         acq_date  = (row["acquisition_date"] or "")[:10]
         remaining = value
 
-        if category not in _SEC179_CATEGORIES:
-            continue
+        is_heavy_vehicle = subcat in _HEAVY_VEHICLE_SUBCATS
+        label = "Heavy Vehicle" if is_heavy_vehicle else category
 
         # ── Section 179 (up to OBBBA cap) ────────────────────────────────
         sec179_available = _SEC179_LIMIT - sec179_used
@@ -161,9 +194,11 @@ def get_deductions(conn) -> list[dict]:
                 "deduction_type":   "Section 179",
                 "deductible_amount": str(deductible_179.quantize(Decimal("0.01"))),
                 "description": (
-                    f"{category} assets qualify for Section 179 expensing "
+                    f"{label} qualifies for Section 179 expensing "
                     f"(OBBBA 2025 limit: ${_SEC179_LIMIT:,.2f}/year; "
                     f"phase-out above ${_SEC179_PHASE_OUT:,.2f})."
+                    + (" GVWR > 6,000 lbs — exempt from luxury-auto depreciation caps."
+                       if is_heavy_vehicle else "")
                 ),
             })
 
@@ -179,6 +214,8 @@ def get_deductions(conn) -> list[dict]:
                     f"OBBBA restores 100% first-year bonus depreciation for qualifying "
                     f"property placed in service after {_BONUS_DEP_CUTOFF} — no dollar cap. "
                     f"Full ${remaining:,.2f} remaining basis expensed in year one."
+                    + (" GVWR > 6,000 lbs — not subject to luxury-auto limits."
+                       if is_heavy_vehicle else "")
                 ),
             })
 
