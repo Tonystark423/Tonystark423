@@ -28,10 +28,23 @@ _NIIT_RATE = Decimal("0.038")
 # IRS: "more than 1 year" = strictly greater than 365 days for long-term treatment
 _LT_HOLDING_DAYS = 365
 
-# Section 179 deduction limit (2025)
-_SEC179_LIMIT = Decimal("1220000.00")
+# ---------------------------------------------------------------------------
+# One Big Beautiful Bill Act (OBBBA / H.R. 1, 2025) provisions
+# ---------------------------------------------------------------------------
+# Section 179 expensing limit: raised from $1,220,000 → $2,500,000
+_SEC179_LIMIT       = Decimal("2500000.00")
+# Section 179 phase-out threshold: raised from $3,050,000 → $4,000,000
+_SEC179_PHASE_OUT   = Decimal("4000000.00")
+# Bonus depreciation: restored to 100% (was 40% in 2025 under prior law)
+# Applies to qualifying property placed in service after 1/19/2025
+_BONUS_DEP_RATE     = Decimal("1.00")
+_BONUS_DEP_CUTOFF   = "2025-01-19"
+# Section 199A pass-through deduction: permanently extended, rate raised 20% → 23%
+_SEC199A_RATE       = Decimal("0.23")
+# QOZ incentives extended through 2034
+_QOZ_EXTENDED_YEAR  = 2034
 
-# Categories eligible for Section 179 deduction
+# Categories eligible for Section 179 / bonus depreciation
 _SEC179_CATEGORIES = {"Computer Resources", "Proprietary IP"}
 
 
@@ -136,8 +149,9 @@ def get_deductions(conn) -> list[dict]:
                     "deduction_type": "Section 179",
                     "deductible_amount": str(deductible.quantize(Decimal("0.01"))),
                     "description": (
-                        f"{category} assets are eligible for Section 179 expensing "
-                        f"(up to ${_SEC179_LIMIT:,.2f} per year)."
+                        f"{category} assets qualify for Section 179 expensing "
+                        f"(OBBBA 2025 limit: ${_SEC179_LIMIT:,.2f}/year; "
+                        f"phase-out above ${_SEC179_PHASE_OUT:,.2f})."
                     ),
                 })
 
@@ -148,10 +162,12 @@ def apply_tax_hacks(gains: list[dict], deductions: list[dict]) -> dict:
     """Apply tax optimisation strategies and return a hacks summary.
 
     Strategies applied:
-      1. Tax-loss harvesting: realised losses offset realised gains.
-      2. Section 179 deduction: immediately expense qualifying assets.
-      3. NIIT reduction: deductions reduce net investment income.
-      4. Long-term holding preference: flag short-term positions for review.
+      1. Section 179 expensing (OBBBA: $2.5M limit)
+      2. Hold-for-long-term rate preference
+      3. NIIT reduction via deductions
+      4. QOZ deferral (OBBBA: extended through 2034)
+      5. 100% Bonus depreciation (OBBBA: restored, no dollar cap)
+      6. Section 199A pass-through deduction (OBBBA: 23%)
     """
     hacks = []
     total_savings = Decimal("0")
@@ -159,15 +175,16 @@ def apply_tax_hacks(gains: list[dict], deductions: list[dict]) -> dict:
     total_gains = sum((Decimal(g["proceeds"]) for g in gains), Decimal("0"))
     total_deductions = sum((Decimal(d["deductible_amount"]) for d in deductions), Decimal("0"))
 
-    # Hack 1 — Section 179 expensing
+    # Hack 1 — Section 179 expensing (OBBBA limit: $2,500,000)
     if total_deductions > 0:
         savings_179 = (total_deductions * _ST_RATE).quantize(Decimal("0.01"))
         total_savings += savings_179
         hacks.append({
-            "hack": "Section 179 Immediate Expensing",
+            "hack": "Section 179 Immediate Expensing (OBBBA: $2.5M limit)",
             "description": (
                 f"Deduct ${total_deductions:,.2f} of qualifying assets this tax year "
-                f"instead of depreciating over multiple years."
+                f"instead of depreciating over multiple years. "
+                f"OBBBA raised the Section 179 limit from $1,220,000 to ${_SEC179_LIMIT:,.2f}."
             ),
             "estimated_savings": str(savings_179),
         })
@@ -201,16 +218,45 @@ def apply_tax_hacks(gains: list[dict], deductions: list[dict]) -> dict:
             "estimated_savings": str(niit_savings),
         })
 
-    # Hack 4 — Qualified Opportunity Zone deferral (informational)
+    # Hack 4 — QOZ deferral (OBBBA: extended through 2034)
     if total_gains > 0:
         hacks.append({
-            "hack": "Qualified Opportunity Zone (QOZ) Deferral",
+            "hack": f"Qualified Opportunity Zone (QOZ) Deferral — extended to {_QOZ_EXTENDED_YEAR}",
             "description": (
                 "Reinvesting capital gains into a Qualified Opportunity Fund can defer "
-                "and potentially reduce taxes on those gains. Consult a tax adviser."
+                "and potentially reduce taxes on those gains. "
+                f"OBBBA extends QOZ incentives through {_QOZ_EXTENDED_YEAR}. "
+                "Consult a tax adviser."
             ),
             "estimated_savings": "varies",
         })
+
+    # Hack 5 — 100% Bonus Depreciation (OBBBA: restored, no dollar cap)
+    if total_deductions > 0:
+        hacks.append({
+            "hack": "100% Bonus Depreciation (OBBBA: restored, no dollar cap)",
+            "description": (
+                f"OBBBA permanently restores 100% first-year bonus depreciation for qualifying "
+                f"property placed in service after {_BONUS_DEP_CUTOFF}. "
+                f"Unlike Section 179 (capped at ${_SEC179_LIMIT:,.2f}), bonus depreciation "
+                f"has no dollar limit — fully expense any amount of qualifying Computer Resources "
+                f"or Proprietary IP in year one."
+            ),
+            "estimated_savings": "varies",
+        })
+
+    # Hack 6 — Section 199A pass-through deduction (OBBBA: 23%, permanent)
+    hacks.append({
+        "hack": f"Section 199A Pass-Through Deduction (OBBBA: {int(_SEC199A_RATE * 100)}%)",
+        "description": (
+            f"OBBBA permanently extends and raises the qualified business income (QBI) "
+            f"deduction from 20% to {int(_SEC199A_RATE * 100)}% for eligible pass-through entities "
+            f"such as LLCs. Stark Financial Holdings LLC may deduct "
+            f"{int(_SEC199A_RATE * 100)}% of net QBI, substantially reducing effective tax rate. "
+            f"Consult a tax adviser to confirm eligibility and W-2 wage limits."
+        ),
+        "estimated_savings": "varies",
+    })
 
     return {
         "hacks": hacks,
@@ -245,6 +291,9 @@ def generate_tax_report(conn, tax_year: int = 2025) -> dict:
         "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "disclaimer": (
             "These figures are ESTIMATES based on incomplete data (no cost basis). "
+            "Incorporates One Big Beautiful Bill Act (OBBBA / H.R. 1, 2025) provisions: "
+            f"Section 179 limit ${_SEC179_LIMIT:,.0f}, 100% bonus depreciation, "
+            f"Section 199A at {int(_SEC199A_RATE * 100)}%, QOZ extended to {_QOZ_EXTENDED_YEAR}. "
             "Consult a qualified tax professional before filing."
         ),
         "capital_gains": gains,

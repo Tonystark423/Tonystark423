@@ -277,6 +277,58 @@ class TestTaxEngineUnit:
         assert report["summary"]["estimated_net_liability"] == "0"
         conn.close()
 
+    def test_sec179_limit_is_obbba_amount(self):
+        """OBBBA raised Section 179 limit from $1,220,000 to $2,500,000."""
+        from tax_engine import _SEC179_LIMIT
+        from decimal import Decimal
+        assert _SEC179_LIMIT == Decimal("2500000.00"), (
+            f"Expected OBBBA Section 179 limit $2,500,000, got ${_SEC179_LIMIT:,.2f}"
+        )
+
+    def test_apply_tax_hacks_includes_bonus_depreciation(self):
+        """OBBBA 100% bonus depreciation hack must appear when there are deductions."""
+        from tax_engine import apply_tax_hacks
+        deductions = [{"deductible_amount": "100000", "deduction_type": "Section 179"}]
+        result = apply_tax_hacks([], deductions)
+        hack_names = [h["hack"] for h in result["hacks"]]
+        assert any("Bonus Depreciation" in name for name in hack_names), (
+            "Expected a 100% Bonus Depreciation hack from OBBBA provisions"
+        )
+
+    def test_apply_tax_hacks_includes_sec199a(self):
+        """OBBBA Section 199A pass-through deduction hack must always appear."""
+        from tax_engine import apply_tax_hacks
+        result = apply_tax_hacks([], [])
+        hack_names = [h["hack"] for h in result["hacks"]]
+        assert any("199A" in name for name in hack_names), (
+            "Expected a Section 199A pass-through deduction hack from OBBBA provisions"
+        )
+
+    def test_qoz_hack_references_2034_extension(self):
+        """OBBBA extends QOZ incentives through 2034 — must be reflected in description."""
+        from tax_engine import apply_tax_hacks
+        gains = [{"proceeds": "10000", "gain_type": "long_term", "estimated_tax": "2000"}]
+        result = apply_tax_hacks(gains, [])
+        qoz_hacks = [h for h in result["hacks"] if "QOZ" in h["hack"] or "Opportunity" in h["hack"]]
+        assert qoz_hacks, "Expected a QOZ hack"
+        assert "2034" in qoz_hacks[0]["description"], "QOZ description must reference 2034 extension"
+
+    def test_sec179_deduction_description_references_obbba(self):
+        """Section 179 deduction description must mention OBBBA and the new $2.5M limit."""
+        from tax_engine import get_deductions
+        conn = self._make_conn()
+        conn.execute(
+            "INSERT INTO assets (asset_name, category, estimated_value, status) "
+            "VALUES (?, ?, ?, ?)",
+            ("GPU Cluster", "Computer Resources", "100000.0000", "active"),
+        )
+        conn.commit()
+        deductions = get_deductions(conn)
+        assert deductions
+        assert "OBBBA" in deductions[0]["description"]
+        assert "2,500,000" in deductions[0]["description"]
+        conn.close()
+
     def test_export_tax_excel_returns_bytes(self):
         """export_tax_excel produces non-empty bytes output."""
         from tax_engine import generate_tax_report, export_tax_excel
