@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS assets (
                          'Computer Resources',
                          'Money Market Funds',
                          'Securities & Commodities',
-                         'Cryptocurrency'
+                         'Cryptocurrency',
+                         'Real Estate'
                      )),
     subcategory      TEXT,
     description      TEXT,

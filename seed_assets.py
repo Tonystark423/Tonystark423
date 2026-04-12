@@ -312,6 +312,53 @@ ASSETS = [
             "under prior law). OBBBA bonus dep may apply; consult tax adviser re listed-property rules."
         ),
     },
+    # ── Real Estate ───────────────────────────────────────────────────────
+    {
+        "asset_name":       "Alpine Estate — 22 Stonegate Road, Alpine NJ 07620",
+        "category":         "Real Estate",
+        "subcategory":      "Residential",
+        "description":      (
+            "8-bedroom, 11-bath estate on 2.4 acres in Alpine, NJ (Bergen County). "
+            "14,200 sq ft. Gated motor court, indoor pool, 6-car garage, tennis court, "
+            "guest house. Offer of $15,000,000 submitted. Pending seller acceptance."
+        ),
+        "quantity":         "1",
+        "unit":             "property",
+        "estimated_value":  "15000000.0000",
+        "acquisition_date": "2025-04-08",
+        "custodian":        "Christie's International Real Estate",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "pending",
+        "notes":            (
+            "Bid of $15,000,000 placed 2025-04-08. Awaiting seller response. "
+            "Real property — depreciated over 27.5 years (residential). "
+            "Not Section 179 eligible. Potential 1031 exchange target."
+        ),
+    },
+    {
+        "asset_name":       "Farmington Estate & Farm — 480 Farms Village Rd, Farmington CT 06032",
+        "category":         "Real Estate",
+        "subcategory":      "Farm & Estate",
+        "description":      (
+            "Historic 34-acre equestrian farm and estate, Farmington Valley, CT. "
+            "6-bedroom Georgian Colonial main house (7,800 sq ft), 12-stall barn, "
+            "paddocks, riding arena, 2 guest cottages. "
+            "All-cash purchase, no financing contingency."
+        ),
+        "quantity":         "1",
+        "unit":             "property",
+        "estimated_value":  "8000000.0000",
+        "acquisition_date": "2025-03-28",
+        "custodian":        "William Pitt Sotheby's International Realty",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            (
+            "All-cash purchase at $8,000,000. No competing bids. Closed 2025-03-28. "
+            "Agricultural land qualifies for CT Farm Tax exemption. "
+            "Mixed-use: residential 27.5-yr + agricultural improvements 15-yr depreciation. "
+            "Consult tax adviser re farmland conservation easement deduction."
+        ),
+    },
 ]
 
 # ---------------------------------------------------------------------------
