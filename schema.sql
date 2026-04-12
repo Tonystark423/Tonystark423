@@ -52,14 +52,3 @@ CREATE TRIGGER IF NOT EXISTS assets_au AFTER UPDATE ON assets BEGIN
     VALUES (new.id, new.asset_name, new.description, new.notes, new.custodian);
 END;
 
--- Meal planning
-CREATE TABLE IF NOT EXISTS meals (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    name            TEXT    NOT NULL,
-    description     TEXT,
-    estimated_cost  TEXT    DEFAULT '0.0000',  -- Decimal string, 4dp
-    cuisine_type    TEXT,
-    meal_category   TEXT    DEFAULT 'general', -- business / personal / general
-    notes           TEXT,
-    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
-);

@@ -5,8 +5,6 @@ const FIELDS = [
   'estimated_value','acquisition_date','custodian','beneficial_owner','status','notes'
 ];
 
-const MEAL_FIELDS = ['name','description','estimated_cost','cuisine_type','meal_category','notes'];
-
 let debounceTimer;
 
 // ---------------------------------------------------------------------------
@@ -15,28 +13,19 @@ let debounceTimer;
 document.addEventListener('DOMContentLoaded', () => {
   loadAssets();
 
-  // Asset section controls
   document.getElementById('searchInput').addEventListener('input', () => {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(loadAssets, 300);
   });
   document.getElementById('categoryFilter').addEventListener('change', loadAssets);
   document.getElementById('statusFilter').addEventListener('change', loadAssets);
+
   document.getElementById('addBtn').addEventListener('click', openAddModal);
   document.getElementById('cancelBtn').addEventListener('click', closeModal);
   document.getElementById('exportBtn').addEventListener('click', exportCSV);
   document.querySelector('.modal-backdrop').addEventListener('click', closeModal);
   document.getElementById('assetForm').addEventListener('submit', handleSubmit);
 
-  // Meal section controls
-  document.getElementById('addMealBtn').addEventListener('click', openAddMealModal);
-  document.getElementById('suggestMealBtn').addEventListener('click', showMealSuggestions);
-  document.getElementById('cancelMealBtn').addEventListener('click', closeMealModal);
-  document.getElementById('mealModalBackdrop').addEventListener('click', closeMealModal);
-  document.getElementById('mealForm').addEventListener('submit', handleMealSubmit);
-  document.getElementById('mealCategoryFilter').addEventListener('change', loadMeals);
-
-  // Tax section controls
   document.getElementById('refreshTaxBtn').addEventListener('click', loadTaxSummary);
   document.getElementById('fileTaxBtn').addEventListener('click', downloadTaxFiling);
 
@@ -48,8 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.tab-section').forEach(s => s.classList.add('hidden'));
       btn.classList.add('active');
       document.getElementById(`section-${tab}`).classList.remove('hidden');
-      if (tab === 'meals') loadMeals();
-      if (tab === 'tax')   loadTaxSummary();
+      if (tab === 'tax') loadTaxSummary();
     });
   });
 });
@@ -209,133 +197,6 @@ function exportCSV() {
 }
 
 // ---------------------------------------------------------------------------
-// Meal Planning
-// ---------------------------------------------------------------------------
-async function loadMeals() {
-  const cat = document.getElementById('mealCategoryFilter').value;
-  const params = new URLSearchParams();
-  if (cat) params.set('category', cat);
-
-  const body = document.getElementById('mealsBody');
-  body.innerHTML = '<tr><td colspan="6" class="empty">Loading…</td></tr>';
-
-  try {
-    const res = await fetch(`/api/meals?${params}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const meals = await res.json();
-    renderMealsTable(meals);
-  } catch (err) {
-    body.innerHTML = `<tr><td colspan="6" class="empty">Error: ${escHtml(err.message)}</td></tr>`;
-  }
-}
-
-function renderMealsTable(meals) {
-  const body = document.getElementById('mealsBody');
-  if (!meals.length) {
-    body.innerHTML = '<tr><td colspan="6" class="empty">No meals found. Add one to get started.</td></tr>';
-    return;
-  }
-  body.innerHTML = meals.map(m => `
-    <tr>
-      <td><strong>${escHtml(m.name)}</strong></td>
-      <td>${escHtml(m.cuisine_type || '—')}</td>
-      <td><span class="badge badge-${escHtml(m.meal_category || 'general')}">${escHtml(m.meal_category || 'general')}</span></td>
-      <td class="value-cell">${m.estimated_cost != null ? '$' + Number(m.estimated_cost).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : '—'}</td>
-      <td>${escHtml(m.notes || '—')}</td>
-      <td class="actions-cell">
-        <button class="btn btn-danger" onclick="deleteMeal(${m.id})">Delete</button>
-      </td>
-    </tr>
-  `).join('');
-}
-
-function openAddMealModal() {
-  document.getElementById('mealModalTitle').textContent = 'Add Meal';
-  document.getElementById('mealForm').reset();
-  document.getElementById('mealId').value = '';
-  hideMealFormError();
-  document.getElementById('mealModal').classList.remove('hidden');
-  document.getElementById('fm_name').focus();
-}
-
-function closeMealModal() {
-  document.getElementById('mealModal').classList.add('hidden');
-}
-
-async function handleMealSubmit(e) {
-  e.preventDefault();
-  hideMealFormError();
-
-  const payload = {};
-  MEAL_FIELDS.forEach(field => {
-    const el = document.getElementById(`fm_${field}`);
-    if (el) {
-      const val = el.value.trim();
-      payload[field] = val === '' ? null : val;
-    }
-  });
-
-  if (!payload.name) {
-    showMealFormError('Meal name is required.');
-    return;
-  }
-
-  if (payload.estimated_cost !== null) {
-    payload.estimated_cost = parseFloat(payload.estimated_cost);
-  }
-
-  try {
-    const res = await fetch('/api/meals', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      showMealFormError(err.error || 'Save failed.');
-      return;
-    }
-    closeMealModal();
-    loadMeals();
-  } catch (err) {
-    showMealFormError(`Network error: ${err.message}`);
-  }
-}
-
-async function deleteMeal(id) {
-  if (!confirm('Delete this meal? This cannot be undone.')) return;
-  try {
-    const res = await fetch(`/api/meals/${id}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    loadMeals();
-  } catch (err) {
-    alert(`Delete failed: ${err.message}`);
-  }
-}
-
-async function showMealSuggestions() {
-  const banner = document.getElementById('mealBudgetBanner');
-  banner.textContent = 'Checking budget…';
-  banner.classList.remove('hidden');
-
-  try {
-    const res = await fetch('/api/meals/suggestions?limit=20');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const budget = data.budget_remaining.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-    const count  = data.suggestions.length;
-    if (count === 0) {
-      banner.innerHTML = `Remaining Travel budget: <strong>$${budget}</strong> — no meals found within budget.`;
-    } else {
-      const names = data.suggestions.slice(0, 5).map(m => escHtml(m.name)).join(', ');
-      banner.innerHTML = `Remaining Travel budget: <strong>$${budget}</strong> — ${count} meal(s) within budget: ${names}${count > 5 ? '…' : ''}.`;
-    }
-  } catch (err) {
-    banner.textContent = `Error: ${err.message}`;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Tax Filing
 // ---------------------------------------------------------------------------
 async function loadTaxSummary() {
@@ -479,14 +340,4 @@ function showFormError(msg) {
 
 function hideFormError() {
   document.getElementById('formError').classList.add('hidden');
-}
-
-function showMealFormError(msg) {
-  const el = document.getElementById('mealFormError');
-  el.textContent = msg;
-  el.classList.remove('hidden');
-}
-
-function hideMealFormError() {
-  document.getElementById('mealFormError').classList.add('hidden');
 }
