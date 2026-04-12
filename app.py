@@ -352,30 +352,47 @@ def report_expenses():
 @app.route("/api/export/excel", methods=["GET"])
 @require_auth
 def export_excel():
-    """Download a multi-sheet Excel workbook of the full ledger.
+    """Download a comprehensive 8-sheet Excel workbook.
 
-    Sheets:
+    Ledger sheets (4):
       Raw Data       — every asset row
-      Monthly Pivot  — Income / Expense / Net by calendar month (.unstack())
+      Monthly Pivot  — Income / Expense / Net by calendar month
       Budget Check   — actual spend vs. limits per category
       Category Rollup— total spend per keyword category
 
+    Tax sheets (4, OBBBA-aware):
+      Summary        — net liability, total proceeds, deductions, savings
+      Capital Gains  — per-asset gains with short/long-term classification
+      Deductions     — Section 179 + 100% bonus depreciation line items
+      Tax Hacks      — all 6 OBBBA optimisation strategies
+
     Query params:
-      after   ISO date — restrict rows included
-      before  ISO date — restrict rows included
+      after   ISO date — restrict ledger rows included
+      before  ISO date — restrict ledger rows included
+      year    int      — tax year for the tax sheets (default: current year)
     """
     try:
-        from ledger_processor import categorize_transaction, export_excel as _export_excel, BUDGET_LIMITS
+        from ledger_processor import categorize_transaction, export_excel as _export_ledger, BUDGET_LIMITS
+        import pandas as _pd
+        import openpyxl
+        from copy import copy as _copy
     except ImportError:
         return jsonify({"error": "pandas/openpyxl not installed"}), 503
 
+    try:
+        from tax_engine import generate_tax_report, export_tax_excel
+    except ImportError:
+        return jsonify({"error": "tax_engine module not available"}), 503
+
+    import datetime as _dt
     import tempfile
-    import pandas as _pd
 
-    db = get_db()
-    sql = "SELECT * FROM assets WHERE 1=1"
+    db   = get_db()
+    year = int(request.args.get("year", _dt.date.today().year))
+
+    # ── Ledger data ──────────────────────────────────────────────────────
+    sql    = "SELECT * FROM assets WHERE 1=1"
     params: list = []
-
     after  = request.args.get("after", "")
     before = request.args.get("before", "")
     if after:
@@ -384,10 +401,25 @@ def export_excel():
     if before:
         sql += " AND acquisition_date <= ?"
         params.append(before)
-
     rows = db.execute(sql, params).fetchall()
+
+    # ── Tax report (always generated) ────────────────────────────────────
+    report = generate_tax_report(db, tax_year=year)
+    report["filing_metadata"] = {
+        "entity_name": "Stark Financial Holdings LLC",
+        "filed_at":    _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "status":      "draft",
+    }
+    tax_xlsx = export_tax_excel(report)
+
     if not rows:
-        return jsonify({"error": "No data in ledger"}), 404
+        # No ledger rows — return tax-only workbook rather than 404
+        filename = f"stark_financial_report_{year}.xlsx"
+        return Response(
+            tax_xlsx,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
 
     df = _pd.DataFrame([dict(r) for r in rows])
     df["Amount"]   = _pd.to_numeric(df["estimated_value"], errors="coerce").fillna(0.0)
@@ -396,20 +428,49 @@ def export_excel():
     )
     df["Category"] = df["description"].fillna("").apply(categorize_transaction)
 
-    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-        tmp_path = tmp.name
-
+    # ── Build combined workbook ───────────────────────────────────────────
+    ledger_fd, ledger_path = tempfile.mkstemp(suffix=".xlsx")
+    tax_fd,    tax_path    = tempfile.mkstemp(suffix=".xlsx")
     try:
-        _export_excel(df, output_path=tmp_path, budget_limits=BUDGET_LIMITS)
-        with open(tmp_path, "rb") as fh:
-            xlsx_bytes = fh.read()
-    finally:
-        os.unlink(tmp_path)
+        _export_ledger(df, output_path=ledger_path, budget_limits=BUDGET_LIMITS)
+        with open(tax_path, "wb") as fh:
+            fh.write(tax_xlsx)
 
+        wb_ledger = openpyxl.load_workbook(ledger_path)
+        wb_tax    = openpyxl.load_workbook(tax_path)
+
+        combined = openpyxl.Workbook()
+        combined.remove(combined.active)   # drop default blank sheet
+
+        for wb in (wb_ledger, wb_tax):
+            for name in wb.sheetnames:
+                src = wb[name]
+                dst = combined.create_sheet(name)
+                for row in src.iter_rows():
+                    for cell in row:
+                        new_cell = dst.cell(
+                            row=cell.row, column=cell.column, value=cell.value
+                        )
+                        if cell.has_style:
+                            new_cell.font      = _copy(cell.font)
+                            new_cell.fill      = _copy(cell.fill)
+                            new_cell.alignment = _copy(cell.alignment)
+                for col, dim in src.column_dimensions.items():
+                    dst.column_dimensions[col].width = dim.width
+
+        buf = io.BytesIO()
+        combined.save(buf)
+        xlsx_bytes = buf.getvalue()
+
+    finally:
+        os.close(ledger_fd); os.unlink(ledger_path)
+        os.close(tax_fd);    os.unlink(tax_path)
+
+    filename = f"stark_financial_report_{year}.xlsx"
     return Response(
         xlsx_bytes,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=stark_financial_report.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
 
