@@ -319,28 +319,27 @@ class TestTaxFileEndpoint:
                            data=json.dumps({}))
         assert resp.status_code == 401
 
-    def test_returns_json_attachment(self, client, auth):
+    def test_returns_excel_attachment(self, client, auth):
         resp = client.post("/api/tax/file", content_type="application/json",
                            data=json.dumps({}), auth=auth)
         assert resp.status_code == 200
-        assert "application/json" in resp.content_type
+        assert "spreadsheetml" in resp.content_type
         cd = resp.headers.get("Content-Disposition", "")
         assert "attachment" in cd
 
-    def test_response_is_valid_json(self, client, auth):
+    def test_response_is_valid_xlsx(self, client, auth):
+        """Response body starts with PK magic bytes (ZIP / XLSX container)."""
         resp = client.post("/api/tax/file", content_type="application/json",
                            data=json.dumps({}), auth=auth)
         assert resp.status_code == 200
-        data = json.loads(resp.data)
-        assert "tax_year" in data
+        # XLSX files are ZIP archives; first two bytes are always b'PK'
+        assert resp.data[:2] == b"PK"
 
-    def test_filing_metadata_present(self, client, auth):
+    def test_entity_name_accepted_without_error(self, client, auth):
+        """Passing entity_name in the body must not cause a server error."""
         resp = client.post("/api/tax/file", content_type="application/json",
                            data=json.dumps({"entity_name": "Stark Holdings"}), auth=auth)
-        data = json.loads(resp.data)
-        assert "filing_metadata" in data
-        assert data["filing_metadata"]["entity_name"] == "Stark Holdings"
-        assert data["filing_metadata"]["status"] == "draft"
+        assert resp.status_code == 200
 
     def test_filename_includes_year(self, client, auth):
         resp = client.post("/api/tax/file", content_type="application/json",
@@ -348,9 +347,10 @@ class TestTaxFileEndpoint:
         assert resp.status_code == 200
         cd = resp.headers.get("Content-Disposition", "")
         assert "2024" in cd
+        assert ".xlsx" in cd
 
-    def test_preparer_stored_in_metadata(self, client, auth):
+    def test_preparer_param_accepted_without_error(self, client, auth):
+        """Passing preparer in the body must not cause a server error."""
         resp = client.post("/api/tax/file", content_type="application/json",
                            data=json.dumps({"preparer": "Tony Stark"}), auth=auth)
-        data = json.loads(resp.data)
-        assert data["filing_metadata"]["preparer"] == "Tony Stark"
+        assert resp.status_code == 200

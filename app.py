@@ -509,19 +509,19 @@ def tax_summary():
 @app.route("/api/tax/file", methods=["POST"])
 @require_auth
 def tax_file():
-    """Generate and download a tax filing document (JSON).
+    """Generate and download a tax filing workbook (Excel).
 
     Optional JSON body:
       { "year": 2025, "entity_name": "...", "preparer": "..." }
 
-    Response 200: application/json attachment
+    Response 200: .xlsx attachment with four sheets:
+      Summary, Capital Gains, Deductions, Tax Hacks
     """
     try:
-        from tax_engine import generate_tax_report
+        from tax_engine import generate_tax_report, export_tax_excel
     except ImportError:
         return jsonify({"error": "tax_engine module not available"}), 503
 
-    import json as _json
     import datetime as _dt
 
     data = request.get_json(silent=True) or {}
@@ -537,10 +537,11 @@ def tax_file():
         "status":      "draft",
     }
 
-    filename = f"stark_tax_filing_{year}.json"
+    xlsx_bytes = export_tax_excel(report)
+    filename   = f"stark_tax_filing_{year}.xlsx"
     return Response(
-        _json.dumps(report, indent=2),
-        mimetype="application/json",
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 

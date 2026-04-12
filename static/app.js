@@ -312,7 +312,7 @@ async function downloadTaxFiling() {
     const a    = document.createElement('a');
     const cd   = res.headers.get('Content-Disposition') || '';
     const match = cd.match(/filename=([^\s;]+)/);
-    a.download = match ? match[1] : 'stark_tax_filing.json';
+    a.download = match ? match[1] : 'stark_tax_filing.xlsx';
     a.href = url;
     a.click();
     URL.revokeObjectURL(url);
