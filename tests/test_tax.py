@@ -215,6 +215,66 @@ class TestTaxEngineUnit:
         assert deductions[0]["deduction_type"] == "Section 179"
         conn.close()
 
+    def test_get_deductions_bonus_dep_for_post_cutoff_asset(self):
+        """Post-OBBBA-cutoff asset gets 100% bonus depreciation on basis not covered by Sec 179."""
+        from tax_engine import get_deductions
+        conn = self._make_conn()
+        # Asset acquired after 2025-01-19 → bonus dep eligible
+        conn.execute(
+            "INSERT INTO assets (asset_name, category, estimated_value, acquisition_date, status) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("Post-OBBBA GPU", "Computer Resources", "5000000.0000", "2025-03-01", "active"),
+        )
+        conn.commit()
+        deductions = get_deductions(conn)
+        types = {d["deduction_type"] for d in deductions}
+        assert "100% Bonus Depreciation" in types, (
+            "Asset acquired after OBBBA cutoff must yield a 100% Bonus Depreciation deduction"
+        )
+        conn.close()
+
+    def test_get_deductions_pre_cutoff_asset_no_bonus_dep(self):
+        """Pre-OBBBA-cutoff asset gets Section 179 only — no bonus depreciation."""
+        from tax_engine import get_deductions
+        conn = self._make_conn()
+        conn.execute(
+            "INSERT INTO assets (asset_name, category, estimated_value, acquisition_date, status) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("Old GPU", "Computer Resources", "500000.0000", "2024-01-01", "active"),
+        )
+        conn.commit()
+        deductions = get_deductions(conn)
+        types = {d["deduction_type"] for d in deductions}
+        assert "100% Bonus Depreciation" not in types
+        assert "Section 179" in types
+        conn.close()
+
+    def test_get_deductions_sec179_cap_then_bonus_dep_on_remainder(self):
+        """When Sec 179 cap is exhausted by older assets, post-cutoff assets get full bonus dep."""
+        from tax_engine import get_deductions, _SEC179_LIMIT
+        from decimal import Decimal
+        conn = self._make_conn()
+        # Older asset fills the entire Sec 179 cap
+        conn.execute(
+            "INSERT INTO assets (asset_name, category, estimated_value, acquisition_date, status) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("Old Big Asset", "Proprietary IP", str(_SEC179_LIMIT), "2022-01-01", "active"),
+        )
+        # Post-cutoff asset — Sec 179 cap is gone, so it gets full bonus dep
+        conn.execute(
+            "INSERT INTO assets (asset_name, category, estimated_value, acquisition_date, status) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("New GPU Post-OBBBA", "Computer Resources", "3000000.0000", "2025-06-01", "active"),
+        )
+        conn.commit()
+        deductions = get_deductions(conn)
+        bonus = [d for d in deductions if d["deduction_type"] == "100% Bonus Depreciation"]
+        assert len(bonus) == 1
+        assert bonus[0]["asset_name"] == "New GPU Post-OBBBA"
+        from decimal import Decimal
+        assert Decimal(bonus[0]["deductible_amount"]) == Decimal("3000000.00")
+        conn.close()
+
     def test_get_deductions_non_eligible_category(self):
         """Money Market Funds are not eligible for Section 179."""
         from tax_engine import get_deductions

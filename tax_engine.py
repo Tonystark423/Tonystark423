@@ -119,41 +119,68 @@ def get_capital_gains(conn) -> list[dict]:
 def get_deductions(conn) -> list[dict]:
     """Return deduction opportunities from active assets.
 
-    Checks:
-      - Section 179 deduction eligibility (Computer Resources, Proprietary IP)
-      - General business-asset deductions
+    Strategy (OBBBA-optimal):
+      1. Section 179 — apply to oldest qualifying assets first, up to $2,500,000.
+      2. 100% Bonus Depreciation — apply to any remaining basis on qualifying assets
+         placed in service after _BONUS_DEP_CUTOFF (2025-01-19). No dollar cap.
+
+    Ordering oldest-first maximises Section 179 on pre-cutoff assets, leaving
+    post-cutoff assets free to take the unlimited bonus depreciation route.
     """
     rows = conn.execute(
         "SELECT id, asset_name, category, subcategory, estimated_value, acquisition_date "
         "FROM assets WHERE status IN ('active', 'pending') "
-        "ORDER BY category, asset_name"
+        "ORDER BY acquisition_date ASC, asset_name"   # oldest first → max Sec 179 on pre-cutoff
     ).fetchall()
 
     deductions = []
-    sec179_total = Decimal("0")
+    sec179_used = Decimal("0")
 
     for row in rows:
         value = _to_decimal(row["estimated_value"])
         if value <= 0:
             continue
 
-        category = row["category"] or ""
-        if category in _SEC179_CATEGORIES:
-            deductible = min(value, _SEC179_LIMIT - sec179_total)
-            if deductible > 0:
-                sec179_total += deductible
-                deductions.append({
-                    "id": row["id"],
-                    "asset_name": row["asset_name"],
-                    "category": category,
-                    "deduction_type": "Section 179",
-                    "deductible_amount": str(deductible.quantize(Decimal("0.01"))),
-                    "description": (
-                        f"{category} assets qualify for Section 179 expensing "
-                        f"(OBBBA 2025 limit: ${_SEC179_LIMIT:,.2f}/year; "
-                        f"phase-out above ${_SEC179_PHASE_OUT:,.2f})."
-                    ),
-                })
+        category  = row["category"] or ""
+        acq_date  = (row["acquisition_date"] or "")[:10]
+        remaining = value
+
+        if category not in _SEC179_CATEGORIES:
+            continue
+
+        # ── Section 179 (up to OBBBA cap) ────────────────────────────────
+        sec179_available = _SEC179_LIMIT - sec179_used
+        if sec179_available > 0:
+            deductible_179 = min(remaining, sec179_available)
+            sec179_used   += deductible_179
+            remaining     -= deductible_179
+            deductions.append({
+                "id":               row["id"],
+                "asset_name":       row["asset_name"],
+                "category":         category,
+                "deduction_type":   "Section 179",
+                "deductible_amount": str(deductible_179.quantize(Decimal("0.01"))),
+                "description": (
+                    f"{category} assets qualify for Section 179 expensing "
+                    f"(OBBBA 2025 limit: ${_SEC179_LIMIT:,.2f}/year; "
+                    f"phase-out above ${_SEC179_PHASE_OUT:,.2f})."
+                ),
+            })
+
+        # ── 100% Bonus Depreciation on remaining basis (post-cutoff only) ─
+        if remaining > 0 and acq_date >= _BONUS_DEP_CUTOFF:
+            deductions.append({
+                "id":               row["id"],
+                "asset_name":       row["asset_name"],
+                "category":         category,
+                "deduction_type":   "100% Bonus Depreciation",
+                "deductible_amount": str(remaining.quantize(Decimal("0.01"))),
+                "description": (
+                    f"OBBBA restores 100% first-year bonus depreciation for qualifying "
+                    f"property placed in service after {_BONUS_DEP_CUTOFF} — no dollar cap. "
+                    f"Full ${remaining:,.2f} remaining basis expensed in year one."
+                ),
+            })
 
     return deductions
 
@@ -172,17 +199,27 @@ def apply_tax_hacks(gains: list[dict], deductions: list[dict]) -> dict:
     hacks = []
     total_savings = Decimal("0")
 
-    total_gains = sum((Decimal(g["proceeds"]) for g in gains), Decimal("0"))
-    total_deductions = sum((Decimal(d["deductible_amount"]) for d in deductions), Decimal("0"))
+    total_gains   = sum((Decimal(g["proceeds"]) for g in gains), Decimal("0"))
+
+    # Split deductions by mechanism so each hack carries the right figure
+    sec179_total  = sum(
+        (Decimal(d["deductible_amount"]) for d in deductions if d.get("deduction_type") == "Section 179"),
+        Decimal("0"),
+    )
+    bonus_dep_total = sum(
+        (Decimal(d["deductible_amount"]) for d in deductions if d.get("deduction_type") == "100% Bonus Depreciation"),
+        Decimal("0"),
+    )
+    total_deductions = sec179_total + bonus_dep_total
 
     # Hack 1 — Section 179 expensing (OBBBA limit: $2,500,000)
-    if total_deductions > 0:
-        savings_179 = (total_deductions * _ST_RATE).quantize(Decimal("0.01"))
+    if sec179_total > 0:
+        savings_179 = (sec179_total * _ST_RATE).quantize(Decimal("0.01"))
         total_savings += savings_179
         hacks.append({
             "hack": "Section 179 Immediate Expensing (OBBBA: $2.5M limit)",
             "description": (
-                f"Deduct ${total_deductions:,.2f} of qualifying assets this tax year "
+                f"Deduct ${sec179_total:,.2f} of qualifying assets this tax year "
                 f"instead of depreciating over multiple years. "
                 f"OBBBA raised the Section 179 limit from $1,220,000 to ${_SEC179_LIMIT:,.2f}."
             ),
@@ -232,15 +269,29 @@ def apply_tax_hacks(gains: list[dict], deductions: list[dict]) -> dict:
         })
 
     # Hack 5 — 100% Bonus Depreciation (OBBBA: restored, no dollar cap)
-    if total_deductions > 0:
+    if bonus_dep_total > 0:
+        bonus_savings = (bonus_dep_total * _ST_RATE).quantize(Decimal("0.01"))
+        total_savings += bonus_savings
+        hacks.append({
+            "hack": "100% Bonus Depreciation (OBBBA: restored, no dollar cap)",
+            "description": (
+                f"OBBBA permanently restores 100% first-year bonus depreciation for qualifying "
+                f"property placed in service after {_BONUS_DEP_CUTOFF}. "
+                f"${bonus_dep_total:,.2f} of post-cutoff Computer Resources / Proprietary IP "
+                f"expensed in full — no dollar cap, unlike Section 179's ${_SEC179_LIMIT:,.2f} limit. "
+                f"Est. savings: ${bonus_savings:,.2f}."
+            ),
+            "estimated_savings": str(bonus_savings),
+        })
+    elif sec179_total > 0:
         hacks.append({
             "hack": "100% Bonus Depreciation (OBBBA: restored, no dollar cap)",
             "description": (
                 f"OBBBA permanently restores 100% first-year bonus depreciation for qualifying "
                 f"property placed in service after {_BONUS_DEP_CUTOFF}. "
                 f"Unlike Section 179 (capped at ${_SEC179_LIMIT:,.2f}), bonus depreciation "
-                f"has no dollar limit — fully expense any amount of qualifying Computer Resources "
-                f"or Proprietary IP in year one."
+                f"has no dollar limit — consider acquiring new Computer Resources or Proprietary IP "
+                f"after {_BONUS_DEP_CUTOFF} to unlock unlimited first-year expensing."
             ),
             "estimated_savings": "varies",
         })
