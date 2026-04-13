@@ -29,6 +29,150 @@ DB_PATH = os.getenv("DB_PATH", "ledger.db")
 # ---------------------------------------------------------------------------
 
 CLAIMS = [
+    # ── Individual / Personal Claims ─────────────────────────────────────
+    {
+        "institution":       "Evan Jacob Burke (Individual)",
+        "claim_type":        "other",
+        "amount_owed":       "0.0000",   # UPDATE: enter amount owed
+        "currency":          "USD",
+        "origin_date":       "2010-01-01",   # UPDATE: correct origin date
+        "last_contact_date": None,
+        "status":            "open",
+        "jurisdiction":      "TBD",          # UPDATE: state / federal / arbitration venue
+        "counsel":           "TBD",
+        "description":       (
+            "Individual claim against Evan Jacob Burke. "
+            "Nature of obligation: TBD — update with specifics. "
+            "Log created to establish timestamped paper trail."
+        ),
+        "notes":             (
+            "UPDATE with: (1) nature of obligation, (2) amount owed, "
+            "(3) jurisdiction, (4) timeline of contact attempts, "
+            "(5) any written agreements, contracts, or communications. "
+            "This record creates a timestamped audit trail for counsel."
+        ),
+    },
+    # ── Active Centralized Exchanges ─────────────────────────────────────
+    {
+        "institution":       "Coinbase Global Inc (Coinbase Prime)",
+        "claim_type":        "investment_return",
+        "amount_owed":       "0.0000",   # UPDATE
+        "currency":          "USD",
+        "origin_date":       None,
+        "last_contact_date": None,
+        "status":            "open",
+        "jurisdiction":      "Federal — ND California",
+        "counsel":           "TBD",
+        "description":       (
+            "Claim against Coinbase Prime institutional custody. "
+            "SEC lawsuit dismissed 2025 (with prejudice; no fines). "
+            "Coinbase retained existing business model. "
+            "Log any withheld funds, disputed transactions, or unresolved support issues."
+        ),
+        "notes":             "UPDATE amount_owed with actual balance/claim. Coinbase Prime customer support: 1-888-908-7930.",
+    },
+    {
+        "institution":       "Binance / Binance.US",
+        "claim_type":        "investment_return",
+        "amount_owed":       "0.0000",   # UPDATE
+        "currency":          "USD",
+        "origin_date":       None,
+        "last_contact_date": None,
+        "status":            "open",
+        "jurisdiction":      "Federal — DOJ / FinCEN Monitored",
+        "counsel":           "TBD",
+        "description":       (
+            "Claim against Binance / Binance.US. "
+            "Binance Global: $4.3B criminal resolution Nov 2023 (AML/sanctions). "
+            "CZ Zhao stepped down as CEO. SEC lawsuit dropped May 2025. "
+            "Binance.US faced USD withdrawal delays 2023-2024. "
+            "Log any withheld funds or unresolved balance disputes."
+        ),
+        "notes":             "UPDATE amount_owed. Binance.US under enhanced compliance monitoring post-DOJ settlement.",
+    },
+    {
+        "institution":       "Kraken / Payward Inc",
+        "claim_type":        "investment_return",
+        "amount_owed":       "0.0000",   # UPDATE
+        "currency":          "USD",
+        "origin_date":       None,
+        "last_contact_date": None,
+        "status":            "open",
+        "jurisdiction":      "Federal — ND California / FinCEN",
+        "counsel":           "TBD",
+        "description":       (
+            "Claim against Kraken (Payward entities). "
+            "Nov 2024: $30M+ combined SEC/CFTC/FinCEN settlement re compliance deficiencies 2018-2023. "
+            "Class-action suits in ND California (consolidated; discovery phase as of early 2026). "
+            "Log any withheld balances, staking reward disputes, or unresolved withdrawals."
+        ),
+        "notes":             "UPDATE amount_owed. Kraken is FTX/Celsius distribution partner — confirm Stark claim distributions received via Kraken.",
+    },
+    {
+        "institution":       "Gemini Trust Company LLC",
+        "claim_type":        "investment_return",
+        "amount_owed":       "0.0000",   # UPDATE
+        "currency":          "USD",
+        "origin_date":       None,
+        "last_contact_date": None,
+        "status":            "open",
+        "jurisdiction":      "NYDFS / Federal",
+        "counsel":           "TBD",
+        "description":       (
+            "Claim against Gemini Trust. Gemini Earn programme suspended Jan 2023; "
+            "Genesis Global (lending partner) filed Chapter 11. "
+            "Gemini settled with NYDFS 2025 re Earn programme failures. "
+            "Log any Earn programme frozen funds or unresolved claims."
+        ),
+        "notes":             "UPDATE amount_owed. Gemini Earn claims may overlap with Genesis Global claim — do not double-count.",
+    },
+    {
+        "institution":       "OKX (OKCoin / Aux Cayes FinTech)",
+        "claim_type":        "investment_return",
+        "amount_owed":       "0.0000",   # UPDATE
+        "currency":          "USD",
+        "origin_date":       None,
+        "last_contact_date": None,
+        "status":            "open",
+        "jurisdiction":      "Federal — DOJ",
+        "counsel":           "TBD",
+        "description":       (
+            "Claim against OKX. DOJ charged OKX with operating unlicensed money transmitter "
+            "and processing $5B+ in suspicious transactions (2025). "
+            "OKX fined $500M. Log any withheld funds or disputed balances."
+        ),
+        "notes":             "UPDATE amount_owed. OKX re-entered US market under enhanced compliance 2025-2026.",
+    },
+    {
+        "institution":       "Bitfinex / iFinex Inc",
+        "claim_type":        "investment_return",
+        "amount_owed":       "0.0000",   # UPDATE
+        "currency":          "USD",
+        "origin_date":       None,
+        "last_contact_date": None,
+        "status":            "open",
+        "jurisdiction":      "SDNY / Federal",
+        "counsel":           "TBD",
+        "description":       (
+            "Claim against Bitfinex / iFinex. 2016 hack: 119,754 BTC stolen; "
+            "DOJ recovered ~94,000 BTC in 2022. CFTC settled for $1.5M re Tether/Bitfinex. "
+            "Log any outstanding balance disputes or recovered-BTC distribution claims."
+        ),
+        "notes":             "UPDATE amount_owed. BFX token holders received 100% repayment by 2017 — confirm receipt.",
+    },
+    {
+        "institution":       "Huobi / HTX Global",
+        "claim_type":        "investment_return",
+        "amount_owed":       "0.0000",   # UPDATE
+        "currency":          "USD",
+        "origin_date":       None,
+        "last_contact_date": None,
+        "status":            "open",
+        "jurisdiction":      "International — Seychelles",
+        "counsel":           "TBD",
+        "description":       "Claim against Huobi / HTX. Significant layoffs and liquidity concerns 2023-2024. Log withheld balances.",
+        "notes":             "UPDATE amount_owed. US withdrawal access limited — may require international counsel.",
+    },
     # ── Crypto Exchange Bankruptcies ─────────────────────────────────────
     {
         "institution":       "FTX Trading Ltd (in Chapter 11 bankruptcy)",
