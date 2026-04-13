@@ -312,7 +312,62 @@ ASSETS = [
             "under prior law). OBBBA bonus dep may apply; consult tax adviser re listed-property rules."
         ),
     },
+    # ── Commodities ──────────────────────────────────────────────────────
+    {
+        "asset_name":       "LME Copper — Physical Ingots, 13,000 MT",
+        "category":         "Securities & Commodities",
+        "subcategory":      "Physical Commodities",
+        "description":      (
+            "13,000 metric tonnes of LBMA-grade copper ingots held in LME-registered "
+            "warehouses. Entry at $12,901/MT (LME spot, 2026-04-11). "
+            "J.P. Morgan / Kraken designated as Tier 1 collateral — low-risk commodity "
+            "financing facility. Physical hedge for Stark compute hardware ecosystem "
+            "(copper integral to HBM4 interconnects, GPU cooling, and data-centre cabling). "
+            "330,000-tonne global supply deficit projected for 2026 supports continued appreciation."
+        ),
+        "quantity":         "13000",
+        "unit":             "metric tons",
+        "estimated_value":  "167713000.0000",
+        "acquisition_date": "2026-04-11",
+        "custodian":        "J.P. Morgan Commodities / LME Registered Warehouse",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            (
+            "Entry $12,901/MT × 13,000 MT = $167,713,000. "
+            "J.P. Morgan Q2 2026 forecast peak $12,500/MT — acquired at tactical dip. "
+            "Pledged as Tier 1 collateral; borrowing facility at SOFR + spread. "
+            "Held > 1 year target for long-term capital gains treatment."
+        ),
+    },
     # ── Real Estate ───────────────────────────────────────────────────────
+    {
+        "asset_name":       "Beverly Hills Estate — Trousdale Estates, Beverly Hills CA 90210",
+        "category":         "Real Estate",
+        "subcategory":      "Luxury Residential",
+        "description":      (
+            "Landmark trophy estate in Trousdale Estates, Beverly Hills. "
+            "Appraised at $100,000,000. Aggressive cash offer of $60,000,000 submitted — "
+            "$40M below appraised value, creating $40,000,000 immediate NAV gain at close. "
+            "Market context: luxury inventory plateau (avg 104 days on market as of Apr 2026); "
+            "motivated seller. Post-close plan: 60% LTV credit facility against appraised "
+            "value ($60M) at SOFR (3.64%) + 2.40% = 6.05% cost of carry — "
+            "full purchase price returned to working capital by deed transfer date."
+        ),
+        "quantity":         "1",
+        "unit":             "property",
+        "estimated_value":  "100000000.0000",
+        "acquisition_date": "2026-04-13",
+        "custodian":        "Christie's International Real Estate",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "pending",
+        "notes":            (
+            "Cash offer $60,000,000 on $100,000,000 appraised asset — $40M instant equity. "
+            "60% LTV on appraised value = $60M credit facility (SOFR 3.64% + 2.40% = 6.05%). "
+            "Working capital fully recycled at close. "
+            "Real property — depreciated over 27.5 years (residential). "
+            "Not Section 179 eligible. Potential 1031 exchange or QOZ reinvestment vehicle."
+        ),
+    },
     {
         "asset_name":       "Alpine Estate — 22 Stonegate Road, Alpine NJ 07620",
         "category":         "Real Estate",

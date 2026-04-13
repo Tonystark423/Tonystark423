@@ -31,16 +31,19 @@ _LT_HOLDING_DAYS = 365
 # ---------------------------------------------------------------------------
 # One Big Beautiful Bill Act (OBBBA / H.R. 1, 2025) provisions
 # ---------------------------------------------------------------------------
-# Section 179 expensing limit: raised from $1,220,000 → $2,500,000
-_SEC179_LIMIT       = Decimal("2500000.00")
-# Section 179 phase-out threshold: raised from $3,050,000 → $4,000,000
-_SEC179_PHASE_OUT   = Decimal("4000000.00")
+# Section 179 expensing limit: raised from $1,220,000 → $2,500,000 (base 2025).
+# Indexed for inflation — 2026 IRS-adjusted limit: $2,560,000.
+_SEC179_LIMIT       = Decimal("2560000.00")
+# Section 179 phase-out threshold: raised from $3,050,000 → $4,000,000 (base 2025).
+# Indexed for inflation — 2026 IRS-adjusted phase-out: $4,090,000.
+_SEC179_PHASE_OUT   = Decimal("4090000.00")
 # Bonus depreciation: restored to 100% (was 40% in 2025 under prior law)
 # Applies to qualifying property placed in service after 1/19/2025
 _BONUS_DEP_RATE     = Decimal("1.00")
 _BONUS_DEP_CUTOFF   = "2025-01-19"
-# Section 199A pass-through deduction: permanently extended, rate raised 20% → 23%
-_SEC199A_RATE       = Decimal("0.23")
+# Section 199A pass-through deduction: permanently extended at 20%.
+# (OBBBA did NOT raise the rate; it made the 20% deduction permanent.)
+_SEC199A_RATE       = Decimal("0.20")
 # QOZ incentives extended through 2034
 _QOZ_EXTENDED_YEAR  = 2034
 

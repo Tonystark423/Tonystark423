@@ -338,11 +338,12 @@ class TestTaxEngineUnit:
         conn.close()
 
     def test_sec179_limit_is_obbba_amount(self):
-        """OBBBA raised Section 179 limit from $1,220,000 to $2,500,000."""
+        """OBBBA raised Section 179 limit from $1,220,000 → $2,500,000 (base 2025),
+        indexed to $2,560,000 for 2026."""
         from tax_engine import _SEC179_LIMIT
         from decimal import Decimal
-        assert _SEC179_LIMIT == Decimal("2500000.00"), (
-            f"Expected OBBBA Section 179 limit $2,500,000, got ${_SEC179_LIMIT:,.2f}"
+        assert _SEC179_LIMIT == Decimal("2560000.00"), (
+            f"Expected 2026 inflation-adjusted Section 179 limit $2,560,000, got ${_SEC179_LIMIT:,.2f}"
         )
 
     def test_apply_tax_hacks_includes_bonus_depreciation(self):
@@ -374,7 +375,7 @@ class TestTaxEngineUnit:
         assert "2034" in qoz_hacks[0]["description"], "QOZ description must reference 2034 extension"
 
     def test_sec179_deduction_description_references_obbba(self):
-        """Section 179 deduction description must mention OBBBA and the new $2.5M limit."""
+        """Section 179 deduction description must mention OBBBA and the 2026 limit."""
         from tax_engine import get_deductions
         conn = self._make_conn()
         conn.execute(
@@ -386,7 +387,7 @@ class TestTaxEngineUnit:
         deductions = get_deductions(conn)
         assert deductions
         assert "OBBBA" in deductions[0]["description"]
-        assert "2,500,000" in deductions[0]["description"]
+        assert "2,560,000" in deductions[0]["description"]
         conn.close()
 
     def test_export_tax_excel_returns_bytes(self):
