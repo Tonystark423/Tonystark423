@@ -10,3 +10,5 @@ dist/
 .DS_Store
 gpu_log.csv
 *.pid
+.coverage
+htmlcov/
