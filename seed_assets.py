@@ -194,12 +194,114 @@ ASSETS = [
         ),
         "quantity":         "42",
         "unit":             "BTC",
-        "estimated_value":  "4200000.0000",
+        "estimated_value":  "3073141.4400",  # 42 BTC × $73,170.03 (Apr 10, 2026)
         "acquisition_date": "2021-11-12",
         "custodian":        "Self-custody (Stark Vault Protocol)",
         "beneficial_owner": "Stark Financial Holdings LLC",
         "status":           "active",
-        "notes":            "Held > 365 days. Long-term rate applies on disposal.",
+        "notes":            "Held > 365 days. Long-term rate applies on disposal. Price updated Apr 13, 2026: $73,170.03/BTC.",
+    },
+    {
+        "asset_name":       "Ethereum — Cold Storage",
+        "category":         "Cryptocurrency",
+        "subcategory":      "ETH",
+        "description":      (
+            "Ethereum position. Multi-sig cold storage via Stark Vault Protocol. "
+            "Core Web3 infrastructure holding; staking yield deferred pending regulatory clarity."
+        ),
+        "quantity":         "500",
+        "unit":             "ETH",
+        "estimated_value":  "1108700.0000",  # 500 ETH × $2,217.40 (Apr 10, 2026)
+        "acquisition_date": "2021-11-20",
+        "custodian":        "Self-custody (Stark Vault Protocol)",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "Held > 365 days. Long-term rate applies on disposal. Price updated Apr 13, 2026: $2,217.40/ETH.",
+    },
+    {
+        "asset_name":       "Solana — Exchange Custody (Kraken)",
+        "category":         "Cryptocurrency",
+        "subcategory":      "SOL",
+        "description":      (
+            "Solana position held on Kraken institutional custody. "
+            "High-throughput L1; strategic position tied to Stark compute ecosystem thesis."
+        ),
+        "quantity":         "5000",
+        "unit":             "SOL",
+        "estimated_value":  "427100.0000",   # 5,000 SOL × $85.42 (Apr 10, 2026)
+        "acquisition_date": "2022-08-15",
+        "custodian":        "Kraken Institutional",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "Held > 365 days. Long-term rate applies. Price updated Apr 13, 2026: $85.42/SOL.",
+    },
+    {
+        "asset_name":       "XRP — Exchange Custody (Coinbase Prime)",
+        "category":         "Cryptocurrency",
+        "subcategory":      "XRP",
+        "description":      (
+            "XRP position. SEC v. Ripple case concluded; XRP re-listed across major US exchanges. "
+            "Cross-border payments infrastructure play."
+        ),
+        "quantity":         "500000",
+        "unit":             "XRP",
+        "estimated_value":  "680000.0000",   # 500,000 XRP × $1.36 (Apr 10, 2026)
+        "acquisition_date": "2023-04-10",
+        "custodian":        "Coinbase Prime",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "Held > 365 days. Long-term rate applies. Price updated Apr 13, 2026: $1.36/XRP.",
+    },
+    {
+        "asset_name":       "BNB — Exchange Custody (Binance Institutional)",
+        "category":         "Cryptocurrency",
+        "subcategory":      "BNB",
+        "description":      (
+            "Binance Coin / BNB Chain utility token. Used for fee rebates on Binance "
+            "institutional trading desk and BNB Chain DeFi participation."
+        ),
+        "quantity":         "200",
+        "unit":             "BNB",
+        "estimated_value":  "119234.0000",   # 200 BNB × $596.17 (Apr 2026)
+        "acquisition_date": "2022-06-01",
+        "custodian":        "Binance Institutional",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "Held > 365 days. Long-term rate applies. Price updated Apr 13, 2026: $596.17/BNB.",
+    },
+    {
+        "asset_name":       "Avalanche — Exchange Custody (Coinbase Prime)",
+        "category":         "Cryptocurrency",
+        "subcategory":      "AVAX",
+        "description":      (
+            "Avalanche AVAX position. L1 subnet infrastructure; "
+            "strategic allocation for Stark subnet deployment optionality."
+        ),
+        "quantity":         "2000",
+        "unit":             "AVAX",
+        "estimated_value":  "50000.0000",    # 2,000 AVAX × ~$25 (Apr 2026 est.)
+        "acquisition_date": "2022-09-22",
+        "custodian":        "Coinbase Prime",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "Held > 365 days. Long-term rate applies. Update price to current AVAX/USD before filing.",
+    },
+    {
+        "asset_name":       "Chainlink — Exchange Custody (Kraken)",
+        "category":         "Cryptocurrency",
+        "subcategory":      "LINK",
+        "description":      (
+            "Chainlink LINK oracle token. Core data-feed infrastructure for Stark "
+            "DeFi and smart-contract positions. Staked via Chainlink SCALE programme."
+        ),
+        "quantity":         "10000",
+        "unit":             "LINK",
+        "estimated_value":  "130000.0000",   # 10,000 LINK × ~$13 (Apr 2026 est.)
+        "acquisition_date": "2022-11-15",
+        "custodian":        "Kraken Institutional",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "Held > 365 days. Long-term rate applies. Update price to current LINK/USD before filing.",
     },
     # ── Ground Transportation Fleet ───────────────────────────────────────
     {
