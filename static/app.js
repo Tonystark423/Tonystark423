@@ -34,6 +34,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelector('#claimModal .modal-backdrop').addEventListener('click', closeClaimModal);
   document.getElementById('claimForm').addEventListener('submit', handleClaimSubmit);
 
+  document.getElementById('fetchPricesBtn').addEventListener('click', fetchLivePrices);
+  document.getElementById('refreshPricesBtn').addEventListener('click', refreshAndUpdatePrices);
+
   // Tab switching
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -487,4 +490,90 @@ function showFormError(msg) {
 
 function hideFormError() {
   document.getElementById('formError').classList.add('hidden');
+}
+
+// ---------------------------------------------------------------------------
+// Live Prices (CoinStats)
+// ---------------------------------------------------------------------------
+
+function fmtUsd(val) {
+  if (val === null || val === undefined) return '—';
+  const n = parseFloat(val);
+  return isNaN(n) ? '—' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function renderPricesTable(data) {
+  const tbody = document.getElementById('pricesBody');
+  const summary = document.getElementById('pricesSummary');
+  const statusEl = document.getElementById('priceStatus');
+
+  document.getElementById('priceLiveTotal').textContent   = fmtUsd(data.total_live_usd);
+  document.getElementById('priceStoredTotal').textContent = fmtUsd(data.total_stored_usd);
+  const pnl = parseFloat(data.pnl_vs_stored || 0);
+  const pnlEl = document.getElementById('pricePnl');
+  pnlEl.textContent = (pnl >= 0 ? '+' : '') + fmtUsd(data.pnl_vs_stored);
+  pnlEl.style.color = pnl >= 0 ? '#1a7a4a' : '#c0392b';
+  summary.style.display = 'flex';
+
+  if (!data.positions || data.positions.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No cryptocurrency assets found in ledger.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.positions.map(p => {
+    const live   = parseFloat(p.live_value_usd);
+    const stored = parseFloat(p.stored_value_usd);
+    const delta  = isNaN(live) ? null : live - stored;
+    const deltaStr = delta === null
+      ? '—'
+      : `<span style="color:${delta >= 0 ? '#1a7a4a' : '#c0392b'}">${delta >= 0 ? '+' : ''}${fmtUsd(delta)}</span>`;
+    return `<tr>
+      <td>${escHtml(p.asset_name)}</td>
+      <td><strong>${escHtml(p.symbol)}</strong></td>
+      <td>${escHtml(p.quantity)}</td>
+      <td>${p.price_usd ? fmtUsd(p.price_usd) : '<em style="color:#888">no feed</em>'}</td>
+      <td>${p.live_value_usd ? fmtUsd(p.live_value_usd) : '—'}</td>
+      <td>${fmtUsd(p.stored_value_usd)}</td>
+      <td>${deltaStr}</td>
+    </tr>`;
+  }).join('');
+
+  statusEl.textContent = `${data.coins_with_price} prices fetched · ${data.currency}`;
+}
+
+async function fetchLivePrices() {
+  const statusEl = document.getElementById('priceStatus');
+  statusEl.textContent = 'Fetching from CoinStats…';
+  try {
+    const resp = await fetch('/api/prices');
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      statusEl.textContent = `Error: ${err.error || resp.statusText}`;
+      return;
+    }
+    renderPricesTable(await resp.json());
+  } catch (err) {
+    statusEl.textContent = `Network error: ${err.message}`;
+  }
+}
+
+async function refreshAndUpdatePrices() {
+  const statusEl = document.getElementById('priceStatus');
+  statusEl.textContent = 'Refreshing prices & updating ledger…';
+  try {
+    const resp = await fetch('/api/prices/refresh', { method: 'POST' });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      statusEl.textContent = `Error: ${err.error || resp.statusText}`;
+      return;
+    }
+    const result = await resp.json();
+    statusEl.textContent = `Updated ${result.count} asset(s) in DB.`;
+    // Reload the read-only snapshot to show fresh values
+    await fetchLivePrices();
+    // Refresh main asset table too
+    loadAssets();
+  } catch (err) {
+    statusEl.textContent = `Network error: ${err.message}`;
+  }
 }

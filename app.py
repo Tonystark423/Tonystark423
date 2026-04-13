@@ -749,6 +749,62 @@ def claims_summary():
     })
 
 
+@app.route("/api/prices", methods=["GET"])
+@require_auth
+def get_prices():
+    """Return live crypto prices + portfolio snapshot without writing to DB.
+
+    Response:
+      {
+        "positions": [{asset_name, symbol, quantity, price_usd,
+                       live_value_usd, stored_value_usd}, ...],
+        "total_live_usd": "...",
+        "total_stored_usd": "...",
+        "pnl_vs_stored": "...",
+        "currency": "USD",
+        "coins_with_price": N
+      }
+    """
+    try:
+        from coinstats import get_portfolio_snapshot
+    except ImportError:
+        return jsonify({"error": "coinstats module not found"}), 503
+
+    try:
+        snapshot = get_portfolio_snapshot(get_db())
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    return jsonify(snapshot)
+
+
+@app.route("/api/prices/refresh", methods=["POST"])
+@require_auth
+def refresh_prices():
+    """Fetch live prices from CoinStats and update estimated_value in the DB.
+
+    Requires COINSTATS_API_KEY in .env.
+
+    Response:
+      {
+        "updated": [{id, asset_name, symbol, quantity,
+                     price_usd, old_value, new_value}, ...],
+        "count": N
+      }
+    """
+    try:
+        from coinstats import refresh_crypto_prices
+    except ImportError:
+        return jsonify({"error": "coinstats module not found"}), 503
+
+    try:
+        updated = refresh_crypto_prices(get_db())
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    return jsonify({"updated": updated, "count": len(updated)})
+
+
 @app.route("/api/sync/starkbank", methods=["POST"])
 @require_auth
 def sync_starkbank():

@@ -23,6 +23,7 @@
       <button class="tab-btn active" data-tab="assets">Assets</button>
       <button class="tab-btn" data-tab="tax">Tax Filing</button>
       <button class="tab-btn" data-tab="claims">Claims</button>
+      <button class="tab-btn" data-tab="prices">Live Prices</button>
     </nav>
 
     <!-- ===== Assets Section ===== -->
@@ -104,6 +105,36 @@
       </div>
       <div id="taxSummaryContent">
         <p class="empty" style="padding:40px 0;">Click <strong>Refresh Summary</strong> to compute your tax summary.</p>
+      </div>
+    </section>
+
+    <!-- ===== Live Prices Section ===== -->
+    <section id="section-prices" class="tab-section hidden">
+      <div class="toolbar">
+        <button id="fetchPricesBtn" class="btn btn-secondary">Fetch Live Prices</button>
+        <button id="refreshPricesBtn" class="btn btn-primary">Refresh &amp; Update DB</button>
+        <span id="priceStatus" style="margin-left:12px;color:#888;font-size:.85rem;"></span>
+      </div>
+      <div id="pricesSummary" style="display:none;margin-bottom:12px;background:#f8f9fa;border-radius:8px;padding:14px 18px;display:flex;gap:32px;flex-wrap:wrap;">
+        <div><strong>Live Portfolio Value</strong><br><span id="priceLiveTotal" style="font-size:1.3rem;color:#1a7a4a;font-weight:700;"></span></div>
+        <div><strong>Stored Value</strong><br><span id="priceStoredTotal" style="font-size:1.1rem;"></span></div>
+        <div><strong>P&amp;L vs Stored</strong><br><span id="pricePnl" style="font-size:1.1rem;font-weight:600;"></span></div>
+      </div>
+      <div class="table-wrap">
+        <table id="pricesTable">
+          <thead>
+            <tr>
+              <th>Asset</th>
+              <th>Symbol</th>
+              <th>Quantity</th>
+              <th>Live Price (USD)</th>
+              <th>Live Value (USD)</th>
+              <th>Stored Value (USD)</th>
+              <th>Δ Value</th>
+            </tr>
+          </thead>
+          <tbody id="pricesBody"><tr><td colspan="7" class="empty">Click <strong>Fetch Live Prices</strong> to load CoinStats data.</td></tr></tbody>
+        </table>
       </div>
     </section>
   </main>
