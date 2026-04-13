@@ -43,6 +43,7 @@ VALID_CATEGORIES = {
     "Money Market Funds",
     "Securities & Commodities",
     "Cryptocurrency",
+    "Real Estate",
 }
 
 VALID_STATUSES = {"active", "sold", "pending"}

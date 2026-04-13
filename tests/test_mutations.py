@@ -197,6 +197,9 @@ class TestAccessControlMutations:
             ("DELETE", "/api/assets/1"),
             ("GET",    "/api/export"),
             ("GET",    "/"),
+            # Tax filing routes
+            ("GET",    "/api/tax/summary"),
+            ("POST",   "/api/tax/file"),
         ]
         for method, path in routes:
             resp = client.open(path, method=method)

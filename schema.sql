@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS assets (
                          'Computer Resources',
                          'Money Market Funds',
                          'Securities & Commodities',
-                         'Cryptocurrency'
+                         'Cryptocurrency',
+                         'Real Estate'
                      )),
     subcategory      TEXT,
     description      TEXT,
@@ -51,3 +52,4 @@ CREATE TRIGGER IF NOT EXISTS assets_au AFTER UPDATE ON assets BEGIN
     INSERT INTO assets_fts(rowid, asset_name, description, notes, custodian)
     VALUES (new.id, new.asset_name, new.description, new.notes, new.custodian);
 END;
+

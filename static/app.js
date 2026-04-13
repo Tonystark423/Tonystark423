@@ -25,10 +25,25 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('exportBtn').addEventListener('click', exportCSV);
   document.querySelector('.modal-backdrop').addEventListener('click', closeModal);
   document.getElementById('assetForm').addEventListener('submit', handleSubmit);
+
+  document.getElementById('refreshTaxBtn').addEventListener('click', loadTaxSummary);
+  document.getElementById('fileTaxBtn').addEventListener('click', downloadTaxFiling);
+
+  // Tab switching
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-section').forEach(s => s.classList.add('hidden'));
+      btn.classList.add('active');
+      document.getElementById(`section-${tab}`).classList.remove('hidden');
+      if (tab === 'tax') loadTaxSummary();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
-// Fetch & render
+// Assets — Fetch & render
 // ---------------------------------------------------------------------------
 async function loadAssets() {
   const q        = document.getElementById('searchInput').value.trim();
@@ -78,7 +93,7 @@ function renderTable(assets) {
 }
 
 // ---------------------------------------------------------------------------
-// Modal — add
+// Assets — Modal add
 // ---------------------------------------------------------------------------
 function openAddModal() {
   document.getElementById('modalTitle').textContent = 'Add Asset';
@@ -90,7 +105,7 @@ function openAddModal() {
 }
 
 // ---------------------------------------------------------------------------
-// Modal — edit
+// Assets — Modal edit
 // ---------------------------------------------------------------------------
 async function openEditModal(id) {
   try {
@@ -118,7 +133,7 @@ function closeModal() {
 }
 
 // ---------------------------------------------------------------------------
-// Save (create / update)
+// Assets — Save (create / update)
 // ---------------------------------------------------------------------------
 async function handleSubmit(e) {
   e.preventDefault();
@@ -161,7 +176,7 @@ async function handleSubmit(e) {
 }
 
 // ---------------------------------------------------------------------------
-// Delete
+// Assets — Delete
 // ---------------------------------------------------------------------------
 async function deleteAsset(id) {
   if (!confirm('Delete this asset? This cannot be undone.')) return;
@@ -175,10 +190,135 @@ async function deleteAsset(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Export
+// Assets — Export
 // ---------------------------------------------------------------------------
 function exportCSV() {
   window.location.href = '/api/export';
+}
+
+// ---------------------------------------------------------------------------
+// Tax Filing
+// ---------------------------------------------------------------------------
+async function loadTaxSummary() {
+  const container = document.getElementById('taxSummaryContent');
+  container.innerHTML = '<p class="empty" style="padding:40px 0;">Computing tax summary…</p>';
+
+  try {
+    const res = await fetch('/api/tax/summary');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const report = await res.json();
+    renderTaxSummary(report);
+  } catch (err) {
+    container.innerHTML = `<p class="empty" style="padding:40px 0;">Error: ${escHtml(err.message)}</p>`;
+  }
+}
+
+function renderTaxSummary(report) {
+  const s = report.summary;
+  const fmt = v => '$' + parseFloat(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+  const gainsRows = (report.capital_gains || []).map(g => `
+    <tr>
+      <td>${escHtml(g.asset_name)}</td>
+      <td>${escHtml(g.category)}</td>
+      <td class="value-cell">${fmt(g.proceeds)}</td>
+      <td><span class="badge badge-${g.gain_type === 'long_term' ? 'active' : 'pending'}">${g.gain_type === 'long_term' ? 'Long-term' : 'Short-term'}</span></td>
+      <td class="value-cell">${fmt(g.estimated_tax)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="5" class="empty">No sold capital-gain assets found.</td></tr>';
+
+  const deductRows = (report.deductions || []).map(d => `
+    <tr>
+      <td>${escHtml(d.asset_name)}</td>
+      <td>${escHtml(d.deduction_type)}</td>
+      <td class="value-cell">${fmt(d.deductible_amount)}</td>
+      <td>${escHtml(d.description)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" class="empty">No deductions identified.</td></tr>';
+
+  const hackRows = (report.hacks || []).map(h => `
+    <tr>
+      <td><strong>${escHtml(h.hack)}</strong></td>
+      <td>${escHtml(h.description)}</td>
+      <td class="value-cell">${h.estimated_savings === 'varies' ? 'varies' : fmt(h.estimated_savings)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="3" class="empty">No hacks available.</td></tr>';
+
+  document.getElementById('taxSummaryContent').innerHTML = `
+    <p class="tax-disclaimer">${escHtml(report.disclaimer || '')}</p>
+
+    <div class="tax-grid">
+      <div class="tax-card">
+        <div class="label">Tax Year</div>
+        <div class="value">${escHtml(String(report.tax_year))}</div>
+      </div>
+      <div class="tax-card">
+        <div class="label">Total Proceeds</div>
+        <div class="value">${fmt(s.total_proceeds)}</div>
+      </div>
+      <div class="tax-card">
+        <div class="label">Total Deductions</div>
+        <div class="value" style="color:var(--success)">${fmt(s.total_deductions)}</div>
+      </div>
+      <div class="tax-card">
+        <div class="label">Estimated Net Liability</div>
+        <div class="value" style="color:var(--danger)">${fmt(s.estimated_net_liability)}</div>
+      </div>
+      <div class="tax-card">
+        <div class="label">Total Est. Savings</div>
+        <div class="value" style="color:var(--success)">${fmt(s.total_estimated_savings)}</div>
+      </div>
+    </div>
+
+    <h3 class="tax-section-title">Capital Gains</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Asset</th><th>Category</th><th>Proceeds</th><th>Type</th><th>Est. Tax</th></tr></thead>
+        <tbody>${gainsRows}</tbody>
+      </table>
+    </div>
+
+    <h3 class="tax-section-title">Deductions</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Asset</th><th>Deduction Type</th><th>Amount</th><th>Notes</th></tr></thead>
+        <tbody>${deductRows}</tbody>
+      </table>
+    </div>
+
+    <h3 class="tax-section-title">Tax Hacks</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Strategy</th><th>Description</th><th>Est. Savings</th></tr></thead>
+        <tbody>${hackRows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function downloadTaxFiling() {
+  try {
+    const res = await fetch('/api/tax/file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entity_name: 'Stark Financial Holdings LLC' }),
+    });
+    if (!res.ok) {
+      alert('Tax filing download failed.');
+      return;
+    }
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    const cd   = res.headers.get('Content-Disposition') || '';
+    const match = cd.match(/filename=([^\s;]+)/);
+    a.download = match ? match[1] : 'stark_tax_filing.xlsx';
+    a.href = url;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`Download error: ${err.message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -19,47 +19,67 @@
   </header>
 
   <main>
-    <div class="toolbar">
-      <input type="search" id="searchInput" placeholder="Search assets…" autocomplete="off">
-      <select id="categoryFilter">
-        <option value="">All Categories</option>
-        <option value="Proprietary IP">Proprietary IP</option>
-        <option value="Computer Resources">Computer Resources</option>
-        <option value="Money Market Funds">Money Market Funds</option>
-        <option value="Securities &amp; Commodities">Securities &amp; Commodities</option>
-        <option value="Cryptocurrency">Cryptocurrency</option>
-      </select>
-      <select id="statusFilter">
-        <option value="">All Statuses</option>
-        <option value="active">Active</option>
-        <option value="pending">Pending</option>
-        <option value="sold">Sold</option>
-      </select>
-    </div>
+    <nav class="tab-bar">
+      <button class="tab-btn active" data-tab="assets">Assets</button>
+      <button class="tab-btn" data-tab="tax">Tax Filing</button>
+    </nav>
 
-    <div class="table-wrap">
-      <table id="assetsTable">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Category</th>
-            <th>Subcategory</th>
-            <th>Value (USD)</th>
-            <th>Quantity</th>
-            <th>Custodian</th>
-            <th>Status</th>
-            <th>Acquired</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="assetsBody">
-          <tr><td colspan="9" class="empty">Loading…</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <!-- ===== Assets Section ===== -->
+    <section id="section-assets" class="tab-section">
+      <div class="toolbar">
+        <input type="search" id="searchInput" placeholder="Search assets…" autocomplete="off">
+        <select id="categoryFilter">
+          <option value="">All Categories</option>
+          <option value="Proprietary IP">Proprietary IP</option>
+          <option value="Computer Resources">Computer Resources</option>
+          <option value="Money Market Funds">Money Market Funds</option>
+          <option value="Securities &amp; Commodities">Securities &amp; Commodities</option>
+          <option value="Cryptocurrency">Cryptocurrency</option>
+          <option value="Real Estate">Real Estate</option>
+        </select>
+        <select id="statusFilter">
+          <option value="">All Statuses</option>
+          <option value="active">Active</option>
+          <option value="pending">Pending</option>
+          <option value="sold">Sold</option>
+        </select>
+      </div>
+
+      <div class="table-wrap">
+        <table id="assetsTable">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Category</th>
+              <th>Subcategory</th>
+              <th>Value (USD)</th>
+              <th>Quantity</th>
+              <th>Custodian</th>
+              <th>Status</th>
+              <th>Acquired</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="assetsBody">
+            <tr><td colspan="9" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== Tax Filing Section ===== -->
+    <section id="section-tax" class="tab-section hidden">
+      <div class="toolbar">
+        <button id="refreshTaxBtn" class="btn btn-secondary">Refresh Summary</button>
+        <button id="fileTaxBtn" class="btn btn-primary">Download Tax Filing</button>
+      </div>
+      <div id="taxSummaryContent">
+        <p class="empty" style="padding:40px 0;">Click <strong>Refresh Summary</strong> to compute your tax summary.</p>
+      </div>
+    </section>
   </main>
 
-  <!-- Modal -->
+  <!-- ===== Asset Modal ===== -->
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-backdrop"></div>
     <div class="modal-box">
@@ -81,6 +101,7 @@
               <option value="Money Market Funds">Money Market Funds</option>
               <option value="Securities &amp; Commodities">Securities &amp; Commodities</option>
               <option value="Cryptocurrency">Cryptocurrency</option>
+              <option value="Real Estate">Real Estate</option>
             </select>
           </div>
         </div>
