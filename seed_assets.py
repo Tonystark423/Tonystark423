@@ -287,6 +287,99 @@ ASSETS = [
         "notes":            "Held > 365 days. Long-term rate applies. Update price to current AVAX/USD before filing.",
     },
     {
+        "asset_name":       "stETH — Lido Liquid Staking",
+        "category":         "Cryptocurrency",
+        "subcategory":      "stETH",
+        "description":      (
+            "300 ETH staked via Lido Finance liquid staking protocol. "
+            "Receives stETH (liquid staking token) earning ~3.3% APR net of Lido 10% fee. "
+            "stETH can be deployed in DeFi while earning validator rewards. "
+            "$38B+ TVL in Lido; 24.2% market share of all staked ETH."
+        ),
+        "quantity":         "300",
+        "unit":             "stETH",
+        "estimated_value":  "665220.0000",   # 300 stETH × $2,217.40
+        "acquisition_date": "2023-06-15",
+        "custodian":        "Lido Finance (self-custodied stETH)",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            (
+            "Staking rewards (~3.3% APR) taxed as ordinary income at FMV when unlocked. "
+            "Estimated annual staking income: ~$21,952 (300 stETH × $2,217 × 3.3%). "
+            "Held > 365 days. stETH disposal triggers long-term CG on appreciation. "
+            "Per IRS guidance: rewards taxable at dominion-and-control date, not unstaking date."
+        ),
+    },
+    {
+        "asset_name":       "Dogecoin — Exchange Custody (Kraken)",
+        "category":         "Cryptocurrency",
+        "subcategory":      "DOGE",
+        "description":      (
+            "Dogecoin position. Held on Kraken institutional custody. "
+            "Retail sentiment hedge; high liquidity, low unit price. "
+            "Active meme-coin market in Q1 2026."
+        ),
+        "quantity":         "1000000",
+        "unit":             "DOGE",
+        "estimated_value":  "95000.0000",    # 1M DOGE × $0.095 (Apr 2026)
+        "acquisition_date": "2021-05-08",
+        "custodian":        "Kraken Institutional",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "Held > 365 days. Long-term rate applies. Price: $0.095/DOGE (Apr 2026).",
+    },
+    {
+        "asset_name":       "Arbitrum — Exchange Custody (Coinbase Prime)",
+        "category":         "Cryptocurrency",
+        "subcategory":      "ARB",
+        "description":      (
+            "Arbitrum (ARB) L2 governance token. Optimistic rollup on Ethereum; "
+            "largest L2 by TVL as of 2026. Strategic allocation for Stark DeFi infrastructure."
+        ),
+        "quantity":         "100000",
+        "unit":             "ARB",
+        "estimated_value":  "7800.0000",     # 100k ARB × $0.078 (Apr 2026)
+        "acquisition_date": "2023-03-23",
+        "custodian":        "Coinbase Prime",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "Held > 365 days. Long-term rate applies. Price: $0.078/ARB (Apr 2026).",
+    },
+    {
+        "asset_name":       "Uniswap — Exchange Custody (Coinbase Prime)",
+        "category":         "Cryptocurrency",
+        "subcategory":      "UNI",
+        "description":      (
+            "Uniswap UNI governance token. Largest decentralised exchange by volume. "
+            "Fee-switch governance vote passed 2024; token now accrues protocol revenue."
+        ),
+        "quantity":         "5000",
+        "unit":             "UNI",
+        "estimated_value":  "40000.0000",    # 5,000 UNI × ~$8 (Apr 2026 est.)
+        "acquisition_date": "2022-10-30",
+        "custodian":        "Coinbase Prime",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "Held > 365 days. Long-term rate applies. Update to current UNI/USD price.",
+    },
+    {
+        "asset_name":       "Aave — Exchange Custody (Kraken)",
+        "category":         "Cryptocurrency",
+        "subcategory":      "AAVE",
+        "description":      (
+            "Aave (AAVE) governance token. Leading DeFi lending protocol with $15B+ TVL. "
+            "GHO stablecoin integrates with Stark treasury management strategy."
+        ),
+        "quantity":         "200",
+        "unit":             "AAVE",
+        "estimated_value":  "30000.0000",    # 200 AAVE × ~$150 (Apr 2026 est.)
+        "acquisition_date": "2022-11-10",
+        "custodian":        "Kraken Institutional",
+        "beneficial_owner": "Stark Financial Holdings LLC",
+        "status":           "active",
+        "notes":            "Held > 365 days. Long-term rate applies. Update to current AAVE/USD price.",
+    },
+    {
         "asset_name":       "Chainlink — Exchange Custody (Kraken)",
         "category":         "Cryptocurrency",
         "subcategory":      "LINK",
