@@ -22,6 +22,7 @@
     <nav class="tab-bar">
       <button class="tab-btn active" data-tab="assets">Assets</button>
       <button class="tab-btn" data-tab="tax">Tax Filing</button>
+      <button class="tab-btn" data-tab="claims">Claims</button>
     </nav>
 
     <!-- ===== Assets Section ===== -->
@@ -61,6 +62,34 @@
             </tr>
           </thead>
           <tbody id="assetsBody">
+            <tr><td colspan="9" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== Claims Section ===== -->
+    <section id="section-claims" class="tab-section hidden">
+      <div class="toolbar">
+        <button id="addClaimBtn" class="btn btn-primary">+ Log Claim</button>
+        <span id="claimsTotalBadge" style="margin-left:16px;font-weight:600;color:#e05c5c;"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="claimsTable">
+          <thead>
+            <tr>
+              <th>Institution</th>
+              <th>Type</th>
+              <th>Amount Owed (USD)</th>
+              <th>Origin Date</th>
+              <th>Years Outstanding</th>
+              <th>Status</th>
+              <th>Jurisdiction</th>
+              <th>Counsel</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="claimsBody">
             <tr><td colspan="9" class="empty">Loading…</td></tr>
           </tbody>
         </table>
@@ -167,6 +196,94 @@
         <div class="modal-footer">
           <button type="button" id="cancelBtn" class="btn btn-secondary">Cancel</button>
           <button type="submit" id="saveBtn" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== Claims Modal ===== -->
+  <div id="claimModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="claimModalTitle">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <h2 id="claimModalTitle">Log Claim</h2>
+      <form id="claimForm" novalidate>
+        <input type="hidden" id="claimId">
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="cf_institution">Institution / Counterparty <span class="req">*</span></label>
+            <input type="text" id="cf_institution" name="institution" required placeholder="e.g. JPMorgan Chase, SEC, Former Employer">
+          </div>
+          <div class="form-group">
+            <label for="cf_claim_type">Claim Type <span class="req">*</span></label>
+            <select id="cf_claim_type" name="claim_type" required>
+              <option value="wages">Wages / Compensation</option>
+              <option value="investment_return">Investment Return</option>
+              <option value="royalties">Royalties / IP</option>
+              <option value="breach_of_contract">Breach of Contract</option>
+              <option value="settlement">Unpaid Settlement</option>
+              <option value="judgment">Court Judgment</option>
+              <option value="other" selected>Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="cf_amount_owed">Amount Owed (USD) <span class="req">*</span></label>
+            <input type="number" id="cf_amount_owed" name="amount_owed" step="any" min="0" required>
+          </div>
+          <div class="form-group">
+            <label for="cf_status">Status</label>
+            <select id="cf_status" name="status">
+              <option value="open">Open</option>
+              <option value="demand_sent">Demand Letter Sent</option>
+              <option value="in_negotiation">In Negotiation</option>
+              <option value="arbitration">Arbitration Filed</option>
+              <option value="litigation">Litigation</option>
+              <option value="judgment_obtained">Judgment Obtained</option>
+              <option value="settled">Settled</option>
+              <option value="closed_no_recovery">Closed — No Recovery</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="cf_origin_date">Origin Date (when obligation arose)</label>
+            <input type="date" id="cf_origin_date" name="origin_date">
+          </div>
+          <div class="form-group">
+            <label for="cf_last_contact_date">Last Contact Date</label>
+            <input type="date" id="cf_last_contact_date" name="last_contact_date">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="cf_jurisdiction">Jurisdiction</label>
+            <input type="text" id="cf_jurisdiction" name="jurisdiction" placeholder="e.g. NY State, Federal, FINRA, AAA">
+          </div>
+          <div class="form-group">
+            <label for="cf_counsel">Counsel / Law Firm</label>
+            <input type="text" id="cf_counsel" name="counsel" placeholder="Attorney or firm name">
+          </div>
+        </div>
+
+        <div class="form-group full">
+          <label for="cf_description">Description</label>
+          <textarea id="cf_description" name="description" rows="2" placeholder="Nature of the obligation and how it arose"></textarea>
+        </div>
+
+        <div class="form-group full">
+          <label for="cf_notes">Notes / Timeline</label>
+          <textarea id="cf_notes" name="notes" rows="3" placeholder="Chronological record of attempts to collect, responses received, etc."></textarea>
+        </div>
+
+        <div id="claimFormError" class="form-error hidden"></div>
+        <div class="modal-footer">
+          <button type="button" id="cancelClaimBtn" class="btn btn-secondary">Cancel</button>
+          <button type="submit" id="saveClaimBtn" class="btn btn-primary">Save Claim</button>
         </div>
       </form>
     </div>

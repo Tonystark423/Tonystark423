@@ -53,3 +53,50 @@ CREATE TRIGGER IF NOT EXISTS assets_au AFTER UPDATE ON assets BEGIN
     VALUES (new.id, new.asset_name, new.description, new.notes, new.custodian);
 END;
 
+
+-- ---------------------------------------------------------------------------
+-- Claims Ledger — unpaid obligations owed TO Stark Financial Holdings LLC
+-- ---------------------------------------------------------------------------
+-- Each row is a distinct claim against an institution or counterparty.
+-- Creates a timestamped, auditable paper trail for demand letters,
+-- arbitration filings, and forensic accounting reconstruction.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS claims (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    institution       TEXT    NOT NULL,
+    claim_type        TEXT    NOT NULL DEFAULT 'other'
+                              CHECK(claim_type IN (
+                                  'wages',
+                                  'investment_return',
+                                  'royalties',
+                                  'breach_of_contract',
+                                  'settlement',
+                                  'judgment',
+                                  'other'
+                              )),
+    amount_owed       TEXT    NOT NULL DEFAULT '0.0000',
+    currency          TEXT    NOT NULL DEFAULT 'USD',
+    origin_date       TEXT,
+    last_contact_date TEXT,
+    status            TEXT    NOT NULL DEFAULT 'open'
+                              CHECK(status IN (
+                                  'open',
+                                  'demand_sent',
+                                  'in_negotiation',
+                                  'arbitration',
+                                  'litigation',
+                                  'judgment_obtained',
+                                  'settled',
+                                  'closed_no_recovery'
+                              )),
+    jurisdiction      TEXT,
+    counsel           TEXT,
+    description       TEXT,
+    notes             TEXT,
+    created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS claims_au AFTER UPDATE ON claims BEGIN
+    UPDATE claims SET updated_at = datetime('now') WHERE id = old.id;
+END;

@@ -607,6 +607,148 @@ def tax_file():
     )
 
 
+# ---------------------------------------------------------------------------
+# Claims Ledger — unpaid obligations owed to Stark Financial Holdings LLC
+# ---------------------------------------------------------------------------
+
+_CLAIM_FIELDS = [
+    "institution", "claim_type", "amount_owed", "currency",
+    "origin_date", "last_contact_date", "status", "jurisdiction",
+    "counsel", "description", "notes",
+]
+
+_CLAIM_TYPES   = {"wages","investment_return","royalties","breach_of_contract",
+                  "settlement","judgment","other"}
+_CLAIM_STATUSES = {"open","demand_sent","in_negotiation","arbitration",
+                   "litigation","judgment_obtained","settled","closed_no_recovery"}
+
+
+@app.route("/api/claims", methods=["GET"])
+@require_auth
+def list_claims():
+    """List all claims, optional ?status= filter."""
+    db = get_db()
+    sql, params = "SELECT * FROM claims WHERE 1=1", []
+    if request.args.get("status"):
+        sql += " AND status = ?"; params.append(request.args["status"])
+    if request.args.get("institution"):
+        sql += " AND institution LIKE ?"; params.append(f"%{request.args['institution']}%")
+    sql += " ORDER BY origin_date ASC, created_at ASC"
+    rows = db.execute(sql, params).fetchall()
+    total_owed = sum(
+        float(r["amount_owed"]) for r in rows
+        if r["status"] not in ("settled", "closed_no_recovery")
+    )
+    return jsonify({
+        "claims": [dict(r) for r in rows],
+        "total_open_owed": f"{total_owed:.2f}",
+        "count": len(rows),
+    })
+
+
+@app.route("/api/claims", methods=["POST"])
+@require_auth
+def create_claim():
+    """Create a new claim record."""
+    data = request.get_json(silent=True) or {}
+    if not data.get("institution"):
+        return jsonify({"error": "institution is required"}), 400
+    if not data.get("amount_owed"):
+        return jsonify({"error": "amount_owed is required"}), 400
+    if data.get("claim_type") and data["claim_type"] not in _CLAIM_TYPES:
+        return jsonify({"error": f"invalid claim_type; valid: {sorted(_CLAIM_TYPES)}"}), 400
+    if data.get("status") and data["status"] not in _CLAIM_STATUSES:
+        return jsonify({"error": f"invalid status; valid: {sorted(_CLAIM_STATUSES)}"}), 400
+
+    row = {k: data.get(k) for k in _CLAIM_FIELDS}
+    row["claim_type"] = row.get("claim_type") or "other"
+    row["status"]     = row.get("status")     or "open"
+    row["currency"]   = row.get("currency")   or "USD"
+
+    import datetime as _dt
+    now = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    row["created_at"] = now
+    row["updated_at"] = now
+
+    db = get_db()
+    cols = ", ".join(row.keys())
+    placeholders = ", ".join("?" for _ in row)
+    cur = db.execute(f"INSERT INTO claims ({cols}) VALUES ({placeholders})", list(row.values()))
+    db.commit()
+    new_row = db.execute("SELECT * FROM claims WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return jsonify(dict(new_row)), 201
+
+
+@app.route("/api/claims/<int:claim_id>", methods=["GET"])
+@require_auth
+def get_claim(claim_id):
+    row = get_db().execute("SELECT * FROM claims WHERE id = ?", (claim_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(dict(row))
+
+
+@app.route("/api/claims/<int:claim_id>", methods=["PUT"])
+@require_auth
+def update_claim(claim_id):
+    """Partial update — pass only fields to change."""
+    data = request.get_json(silent=True) or {}
+    if not data:
+        return jsonify({"error": "no fields provided"}), 400
+    db = get_db()
+    if not db.execute("SELECT id FROM claims WHERE id = ?", (claim_id,)).fetchone():
+        return jsonify({"error": "not found"}), 404
+    allowed = {k: v for k, v in data.items() if k in _CLAIM_FIELDS}
+    if not allowed:
+        return jsonify({"error": "no updatable fields provided"}), 400
+    set_clause = ", ".join(f"{k} = ?" for k in allowed)
+    db.execute(f"UPDATE claims SET {set_clause} WHERE id = ?",
+               [*allowed.values(), claim_id])
+    db.commit()
+    return jsonify(dict(db.execute("SELECT * FROM claims WHERE id = ?", (claim_id,)).fetchone()))
+
+
+@app.route("/api/claims/<int:claim_id>", methods=["DELETE"])
+@require_auth
+def delete_claim(claim_id):
+    db = get_db()
+    if not db.execute("SELECT id FROM claims WHERE id = ?", (claim_id,)).fetchone():
+        return jsonify({"error": "not found"}), 404
+    db.execute("DELETE FROM claims WHERE id = ?", (claim_id,))
+    db.commit()
+    return "", 204
+
+
+@app.route("/api/claims/summary", methods=["GET"])
+@require_auth
+def claims_summary():
+    """Return totals grouped by status and claim type."""
+    db = get_db()
+    by_status = db.execute(
+        "SELECT status, COUNT(*) as count, SUM(CAST(amount_owed AS REAL)) as total "
+        "FROM claims GROUP BY status ORDER BY total DESC"
+    ).fetchall()
+    by_type = db.execute(
+        "SELECT claim_type, COUNT(*) as count, SUM(CAST(amount_owed AS REAL)) as total "
+        "FROM claims GROUP BY claim_type ORDER BY total DESC"
+    ).fetchall()
+    open_total = db.execute(
+        "SELECT SUM(CAST(amount_owed AS REAL)) FROM claims "
+        "WHERE status NOT IN ('settled','closed_no_recovery')"
+    ).fetchone()[0] or 0.0
+    oldest = db.execute(
+        "SELECT institution, origin_date, amount_owed FROM claims "
+        "WHERE status NOT IN ('settled','closed_no_recovery') "
+        "ORDER BY origin_date ASC LIMIT 1"
+    ).fetchone()
+    return jsonify({
+        "total_open_owed": f"{open_total:.2f}",
+        "by_status": [dict(r) for r in by_status],
+        "by_type":   [dict(r) for r in by_type],
+        "oldest_open_claim": dict(oldest) if oldest else None,
+    })
+
+
 @app.route("/api/sync/starkbank", methods=["POST"])
 @require_auth
 def sync_starkbank():

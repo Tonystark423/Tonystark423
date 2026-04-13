@@ -29,6 +29,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('refreshTaxBtn').addEventListener('click', loadTaxSummary);
   document.getElementById('fileTaxBtn').addEventListener('click', downloadTaxFiling);
 
+  document.getElementById('addClaimBtn').addEventListener('click', openAddClaimModal);
+  document.getElementById('cancelClaimBtn').addEventListener('click', closeClaimModal);
+  document.querySelector('#claimModal .modal-backdrop').addEventListener('click', closeClaimModal);
+  document.getElementById('claimForm').addEventListener('submit', handleClaimSubmit);
+
   // Tab switching
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -37,7 +42,8 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.tab-section').forEach(s => s.classList.add('hidden'));
       btn.classList.add('active');
       document.getElementById(`section-${tab}`).classList.remove('hidden');
-      if (tab === 'tax') loadTaxSummary();
+      if (tab === 'tax')    loadTaxSummary();
+      if (tab === 'claims') loadClaims();
     });
   });
 });
@@ -194,6 +200,147 @@ async function deleteAsset(id) {
 // ---------------------------------------------------------------------------
 function exportCSV() {
   window.location.href = '/api/export';
+}
+
+// ---------------------------------------------------------------------------
+// Claims
+// ---------------------------------------------------------------------------
+const CLAIM_FIELDS = [
+  'institution','claim_type','amount_owed','origin_date','last_contact_date',
+  'status','jurisdiction','counsel','description','notes'
+];
+
+const STATUS_LABELS = {
+  open:               'Open',
+  demand_sent:        'Demand Sent',
+  in_negotiation:     'Negotiating',
+  arbitration:        'Arbitration',
+  litigation:         'Litigation',
+  judgment_obtained:  'Judgment',
+  settled:            'Settled',
+  closed_no_recovery: 'Closed',
+};
+
+const TYPE_LABELS = {
+  wages:              'Wages',
+  investment_return:  'Investment Return',
+  royalties:          'Royalties / IP',
+  breach_of_contract: 'Breach of Contract',
+  settlement:         'Settlement',
+  judgment:           'Judgment',
+  other:              'Other',
+};
+
+async function loadClaims() {
+  const tbody = document.getElementById('claimsBody');
+  tbody.innerHTML = '<tr><td colspan="9" class="empty">Loading…</td></tr>';
+  try {
+    const res  = await fetch('/api/claims');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderClaims(data.claims);
+    const badge = document.getElementById('claimsTotalBadge');
+    badge.textContent = data.count > 0
+      ? `${data.count} claim(s) — $${parseFloat(data.total_open_owed).toLocaleString('en-US', {minimumFractionDigits:2})} open`
+      : '';
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">Error: ${escHtml(err.message)}</td></tr>`;
+  }
+}
+
+function renderClaims(claims) {
+  const tbody = document.getElementById('claimsBody');
+  if (!claims.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">No claims on record.</td></tr>';
+    return;
+  }
+  const fmt = v => '$' + parseFloat(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  const yearsOut = origin => {
+    if (!origin) return '—';
+    const days = (new Date() - new Date(origin)) / 86400000;
+    return (days / 365.25).toFixed(1) + ' yrs';
+  };
+  const statusClass = s => ({
+    open:'pending', demand_sent:'pending', in_negotiation:'pending',
+    arbitration:'pending', litigation:'pending',
+    judgment_obtained:'active', settled:'active', closed_no_recovery:'sold'
+  }[s] || 'pending');
+
+  tbody.innerHTML = claims.map(c => `
+    <tr>
+      <td><strong>${escHtml(c.institution)}</strong></td>
+      <td>${escHtml(TYPE_LABELS[c.claim_type] || c.claim_type)}</td>
+      <td class="value-cell" style="color:#e05c5c;">${fmt(c.amount_owed)}</td>
+      <td>${c.origin_date || '—'}</td>
+      <td>${yearsOut(c.origin_date)}</td>
+      <td><span class="badge badge-${statusClass(c.status)}">${escHtml(STATUS_LABELS[c.status] || c.status)}</span></td>
+      <td>${escHtml(c.jurisdiction || '—')}</td>
+      <td>${escHtml(c.counsel || '—')}</td>
+      <td>
+        <button class="btn-icon" onclick="editClaim(${c.id})" title="Edit">&#9998;</button>
+        <button class="btn-icon btn-danger" onclick="deleteClaim(${c.id})" title="Delete">&#128465;</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function openAddClaimModal() {
+  document.getElementById('claimModalTitle').textContent = 'Log Claim';
+  document.getElementById('claimId').value = '';
+  document.getElementById('claimForm').reset();
+  document.getElementById('claimFormError').classList.add('hidden');
+  document.getElementById('claimModal').classList.remove('hidden');
+}
+
+function closeClaimModal() {
+  document.getElementById('claimModal').classList.add('hidden');
+}
+
+async function editClaim(id) {
+  const res = await fetch(`/api/claims/${id}`);
+  if (!res.ok) { alert('Could not load claim.'); return; }
+  const c = await res.json();
+  document.getElementById('claimModalTitle').textContent = 'Edit Claim';
+  document.getElementById('claimId').value = id;
+  CLAIM_FIELDS.forEach(f => {
+    const el = document.getElementById(`cf_${f}`);
+    if (el) el.value = c[f] || '';
+  });
+  document.getElementById('claimFormError').classList.add('hidden');
+  document.getElementById('claimModal').classList.remove('hidden');
+}
+
+async function handleClaimSubmit(e) {
+  e.preventDefault();
+  const id   = document.getElementById('claimId').value;
+  const data = {};
+  CLAIM_FIELDS.forEach(f => {
+    const el = document.getElementById(`cf_${f}`);
+    if (el && el.value !== '') data[f] = el.value;
+  });
+  const method = id ? 'PUT' : 'POST';
+  const url    = id ? `/api/claims/${id}` : '/api/claims';
+  const res    = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    const el  = document.getElementById('claimFormError');
+    el.textContent = err.error || 'Save failed.';
+    el.classList.remove('hidden');
+    return;
+  }
+  closeClaimModal();
+  loadClaims();
+}
+
+async function deleteClaim(id) {
+  if (!confirm('Delete this claim record?')) return;
+  const res = await fetch(`/api/claims/${id}`, { method: 'DELETE' });
+  if (res.status === 204) loadClaims();
+  else alert('Delete failed.');
 }
 
 // ---------------------------------------------------------------------------
