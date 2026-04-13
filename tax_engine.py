@@ -336,15 +336,18 @@ def apply_tax_hacks(gains: list[dict], deductions: list[dict]) -> dict:
             "estimated_savings": "varies",
         })
 
-    # Hack 6 — Section 199A pass-through deduction (OBBBA: 23%, permanent)
+    # Hack 6 — Section 199A pass-through deduction (OBBBA: 20%, now permanent)
     hacks.append({
-        "hack": f"Section 199A Pass-Through Deduction (OBBBA: {int(_SEC199A_RATE * 100)}%)",
+        "hack": f"Section 199A Pass-Through Deduction (OBBBA: {int(_SEC199A_RATE * 100)}%, permanent)",
         "description": (
-            f"OBBBA permanently extends and raises the qualified business income (QBI) "
-            f"deduction from 20% to {int(_SEC199A_RATE * 100)}% for eligible pass-through entities "
-            f"such as LLCs. Stark Financial Holdings LLC may deduct "
-            f"{int(_SEC199A_RATE * 100)}% of net QBI, substantially reducing effective tax rate. "
-            f"Consult a tax adviser to confirm eligibility and W-2 wage limits."
+            f"OBBBA permanently extends the qualified business income (QBI) deduction at "
+            f"{int(_SEC199A_RATE * 100)}% for eligible pass-through entities such as LLCs. "
+            f"Without OBBBA this would have expired after 2025. "
+            f"Stark Financial Holdings LLC may deduct {int(_SEC199A_RATE * 100)}% of net QBI, "
+            f"substantially reducing effective tax rate on pass-through income. "
+            f"2026 threshold: $203,000 (single) / $406,000 (MFJ) before W-2 wage limits apply. "
+            f"Minimum $400 deduction guaranteed if QBI ≥ $1,000 (OBBBA new provision). "
+            f"Consult a tax adviser to confirm eligibility."
         ),
         "estimated_savings": "varies",
     })
@@ -516,6 +519,222 @@ def export_tax_excel(report: dict) -> bytes:
         ws_hacks.cell(row=row_i, column=2, value=h["description"])
         ws_hacks.cell(row=row_i, column=3, value=h["estimated_savings"])
     _auto_width(ws_hacks)
+
+    # ------------------------------------------------------------------ #
+    # Sheet 5 — Schedule D (IRS form structure)
+    # ------------------------------------------------------------------ #
+    ws_sd = wb.create_sheet("Schedule D")
+    ws_sd["A1"] = f"Schedule D — Capital Gains and Losses  (Tax Year {report['tax_year']})"
+    ws_sd["A1"].font = TITLE_FONT
+    ws_sd["A2"] = "Stark Financial Holdings LLC  |  Prepared by Stark Tax Engine"
+    ws_sd["A2"].font = MUTED_FONT
+
+    sd_headers = ["(a) Description", "(b) Date Acquired", "(c) Date Sold / Disposed",
+                  "(d) Proceeds ($)", "(e) Cost Basis ($)", "(f) Adj ($)", "(g) Gain / Loss ($)",
+                  "Gain Type", "Est. Federal Tax ($)"]
+    for col, h in enumerate(sd_headers, start=1):
+        ws_sd.cell(row=4, column=col, value=h)
+    _style_header_row(ws_sd, 4, len(sd_headers))
+
+    short_gains = [g for g in report["capital_gains"] if g["gain_type"] == "short_term"]
+    long_gains  = [g for g in report["capital_gains"] if g["gain_type"] == "long_term"]
+
+    def _write_sd_section(ws, title, gains_list, start_row):
+        ws.cell(row=start_row, column=1, value=title).font = Font(bold=True, color="4F8EF7")
+        r = start_row + 1
+        for g in gains_list:
+            proceeds = float(g["proceeds"])
+            ws.cell(row=r, column=1, value=g["asset_name"])
+            ws.cell(row=r, column=2, value=g.get("acquisition_date", "N/A"))
+            ws.cell(row=r, column=3, value="See ledger")
+            ws.cell(row=r, column=4, value=proceeds)
+            ws.cell(row=r, column=5, value="N/A — basis not tracked")
+            ws.cell(row=r, column=6, value=0)
+            ws.cell(row=r, column=7, value=proceeds)   # treated as full gain
+            ws.cell(row=r, column=8, value=g["gain_type"].replace("_", "-"))
+            ws.cell(row=r, column=9, value=float(g["estimated_tax"]))
+            r += 1
+        subtotal = sum(float(g["proceeds"]) for g in gains_list)
+        ws.cell(row=r, column=1, value=f"Subtotal ({title})").font = Font(bold=True)
+        ws.cell(row=r, column=4, value=subtotal).font = Font(bold=True)
+        ws.cell(row=r, column=9,
+                value=sum(float(g["estimated_tax"]) for g in gains_list)).font = Font(bold=True)
+        return r + 2
+
+    row_ptr = 5
+    row_ptr = _write_sd_section(ws_sd, "Part I — Short-Term (held ≤ 1 year; rate: 37%)", short_gains, row_ptr)
+    row_ptr = _write_sd_section(ws_sd, "Part II — Long-Term (held > 1 year; rate: 20%)", long_gains, row_ptr)
+
+    total_tax = sum(float(g["estimated_tax"]) for g in report["capital_gains"])
+    ws_sd.cell(row=row_ptr, column=1, value="NET CAPITAL GAINS TAX (Federal, est.)").font = Font(bold=True, color="E05C5C")
+    ws_sd.cell(row=row_ptr, column=9, value=total_tax).font = Font(bold=True, color="E05C5C")
+    ws_sd.cell(row=row_ptr + 1, column=1,
+               value="* Cost basis not tracked in ledger. Proceeds treated as full gain. Update with actual basis before filing."
+               ).font = MUTED_FONT
+    _auto_width(ws_sd)
+
+    # ------------------------------------------------------------------ #
+    # Sheet 6 — Form 4562 (Depreciation & Amortisation)
+    # ------------------------------------------------------------------ #
+    ws_4562 = wb.create_sheet("Form 4562")
+    ws_4562["A1"] = f"Form 4562 — Depreciation and Amortization  (Tax Year {report['tax_year']})"
+    ws_4562["A1"].font = TITLE_FONT
+    ws_4562["A2"] = "Stark Financial Holdings LLC  |  EIN: XX-XXXXXXX  |  OBBBA provisions applied"
+    ws_4562["A2"].font = MUTED_FONT
+
+    sec179_items  = [d for d in report["deductions"] if d["deduction_type"] == "Section 179"]
+    bonus_items   = [d for d in report["deductions"] if d["deduction_type"] == "100% Bonus Depreciation"]
+    sec179_total  = sum(float(d["deductible_amount"]) for d in sec179_items)
+    bonus_total   = sum(float(d["deductible_amount"]) for d in bonus_items)
+
+    ws_4562["A4"] = "PART I — Election to Expense Certain Property (Section 179)"
+    ws_4562["A4"].font = Font(bold=True, color="4F8EF7")
+    part1 = [
+        ("Line 1",  "Maximum Section 179 amount (OBBBA 2026 inflation-adjusted)", f"${_SEC179_LIMIT:,.2f}"),
+        ("Line 2",  "Phase-out threshold (OBBBA 2026 inflation-adjusted)",         f"${_SEC179_PHASE_OUT:,.2f}"),
+        ("Line 6",  "Total cost of Section 179 property placed in service",        f"${sec179_total:,.2f}"),
+        ("Line 12", "Section 179 expense deduction this year",                     f"${sec179_total:,.2f}"),
+    ]
+    for i, (line, desc, val) in enumerate(part1, start=5):
+        ws_4562.cell(row=i, column=1, value=line).font = Font(bold=True)
+        ws_4562.cell(row=i, column=2, value=desc)
+        ws_4562.cell(row=i, column=3, value=val)
+
+    ws_4562["A10"] = "PART II — Special Depreciation Allowance (OBBBA 100% Bonus Depreciation)"
+    ws_4562["A10"].font = Font(bold=True, color="4F8EF7")
+    ws_4562.cell(row=11, column=1, value="Line 14").font = Font(bold=True)
+    ws_4562.cell(row=11, column=2,
+        value="100% bonus depreciation — qualifying property placed in service after 2025-01-19")
+    ws_4562.cell(row=11, column=3, value=f"${bonus_total:,.2f}")
+
+    ws_4562["A13"] = "PART III — MACRS Depreciation Detail"
+    ws_4562["A13"].font = Font(bold=True, color="4F8EF7")
+    detail_headers = ["Asset Description", "Date Placed in Service", "Basis ($)",
+                      "Recovery Period", "Method", "Deduction Type", "Deductible ($)"]
+    for col, h in enumerate(detail_headers, start=1):
+        ws_4562.cell(row=14, column=col, value=h)
+    _style_header_row(ws_4562, 14, len(detail_headers))
+
+    for ri, d in enumerate(report["deductions"], start=15):
+        is_179  = d["deduction_type"] == "Section 179"
+        period  = "Immediate" if not is_179 else "Immediate (Sec 179)"
+        method  = "Section 179" if is_179 else "100% Bonus Dep (OBBBA)"
+        ws_4562.cell(row=ri, column=1, value=d["asset_name"])
+        ws_4562.cell(row=ri, column=2, value="See ledger")
+        ws_4562.cell(row=ri, column=3, value=float(d["deductible_amount"]))
+        ws_4562.cell(row=ri, column=4, value=period)
+        ws_4562.cell(row=ri, column=5, value=method)
+        ws_4562.cell(row=ri, column=6, value=d["deduction_type"])
+        ws_4562.cell(row=ri, column=7, value=float(d["deductible_amount"]))
+
+    total_row = 15 + len(report["deductions"])
+    ws_4562.cell(row=total_row, column=1, value="TOTAL DEPRECIATION DEDUCTIONS").font = Font(bold=True)
+    ws_4562.cell(row=total_row, column=7,
+                 value=sec179_total + bonus_total).font = Font(bold=True)
+    _auto_width(ws_4562)
+
+    # ------------------------------------------------------------------ #
+    # Sheet 7 — Quarterly Estimated Tax Payments
+    # ------------------------------------------------------------------ #
+    ws_qtr = wb.create_sheet("Quarterly Estimates")
+    ws_qtr["A1"] = f"Quarterly Estimated Tax Payments — {report['tax_year']}"
+    ws_qtr["A1"].font = TITLE_FONT
+    ws_qtr["A2"] = (
+        "IRS Form 1040-ES / 1120-W schedule. "
+        "LLC taxed as partnership: pay through partners' individual estimated taxes."
+    )
+    ws_qtr["A2"].font = MUTED_FONT
+    ws_qtr.row_dimensions[2].height = 30
+
+    net_liability = float(report["summary"]["estimated_net_liability"])
+    quarterly     = net_liability / 4
+
+    qtr_headers = ["Quarter", "Due Date", "Estimated Payment ($)", "Cumulative ($)", "Status", "Notes"]
+    for col, h in enumerate(qtr_headers, start=1):
+        ws_qtr.cell(row=4, column=col, value=h)
+    _style_header_row(ws_qtr, 4, len(qtr_headers))
+
+    quarters = [
+        ("Q1 2026", "April 15, 2026",   quarterly,     quarterly,     "⚠ Due / Past", "1st installment"),
+        ("Q2 2026", "June 16, 2026",    quarterly, 2 * quarterly,     "Upcoming",     "2nd installment"),
+        ("Q3 2026", "September 15, 2026", quarterly, 3 * quarterly,   "Upcoming",     "3rd installment"),
+        ("Q4 2026", "January 15, 2027", quarterly, 4 * quarterly,     "Upcoming",     "4th installment"),
+    ]
+    for ri, (qtr, due, pmt, cum, status, note) in enumerate(quarters, start=5):
+        ws_qtr.cell(row=ri, column=1, value=qtr).font = Font(bold=True)
+        ws_qtr.cell(row=ri, column=2, value=due)
+        ws_qtr.cell(row=ri, column=3, value=round(pmt, 2))
+        ws_qtr.cell(row=ri, column=4, value=round(cum, 2))
+        status_cell = ws_qtr.cell(row=ri, column=5, value=status)
+        if "Past" in status:
+            status_cell.font = Font(color="E05C5C", bold=True)
+        ws_qtr.cell(row=ri, column=6, value=note)
+
+    ws_qtr.cell(row=10, column=1, value="TOTAL ANNUAL LIABILITY (Est.)").font = Font(bold=True)
+    ws_qtr.cell(row=10, column=3, value=round(net_liability, 2)).font = Font(bold=True)
+
+    ws_qtr["A12"] = "Safe-harbour rule: pay ≥ 100% of prior year tax (110% if AGI > $150k) to avoid underpayment penalties."
+    ws_qtr["A12"].font = MUTED_FONT
+    ws_qtr["A13"] = "State estimated taxes (NJ, CT, CA) must be filed separately — see Filing Checklist sheet."
+    ws_qtr["A13"].font = MUTED_FONT
+    _auto_width(ws_qtr)
+
+    # ------------------------------------------------------------------ #
+    # Sheet 8 — Filing Checklist (replaces CPA prep session)
+    # ------------------------------------------------------------------ #
+    ws_chk = wb.create_sheet("Filing Checklist")
+    ws_chk["A1"] = f"CPA-Replacement Filing Checklist — Tax Year {report['tax_year']}"
+    ws_chk["A1"].font = TITLE_FONT
+    ws_chk["A2"] = "Stark Financial Holdings LLC  |  Auto-generated by Stark Tax Engine"
+    ws_chk["A2"].font = MUTED_FONT
+
+    chk_headers = ["#", "Form / Action", "Due Date", "Status", "Details"]
+    for col, h in enumerate(chk_headers, start=1):
+        ws_chk.cell(row=4, column=col, value=h)
+    _style_header_row(ws_chk, 4, len(chk_headers))
+
+    checklist = [
+        # Federal — entity
+        ("1",  "Form 1065 — U.S. Partnership Return",          "Mar 15 (ext. Sep 15)", "Required",  "LLC taxed as partnership; file for all partners."),
+        ("2",  "Schedule K-1 — Partner Shares",                "Mar 15",               "Required",  "Issue to each beneficial owner. Includes QBI, gains, depreciation."),
+        ("3",  "Form 4562 — Depreciation & Amortization",      "With 1065",            "Generated", f"Sec 179: ${sec179_total:,.0f}  |  Bonus Dep: ${bonus_total:,.0f}."),
+        ("4",  "Schedule D — Capital Gains & Losses",          "With 1065",            "Generated", "See Schedule D sheet. Update cost basis before filing."),
+        ("5",  "Form 8960 — NIIT (3.8%)",                      "With 1065/1040",       "Required",  "Net investment income > $200k threshold. Compute per partner."),
+        ("6",  "Form 8949 — Sales of Capital Assets",          "With 1065",            "Required",  "Detail each sold asset. Basis column flagged N/A — obtain records."),
+        ("7",  "Form 8997 — QOZ Investments",                  "If applicable",        "Review",    "Required if gains reinvested into Qualified Opportunity Fund."),
+        # Federal — banking / foreign
+        ("8",  "FinCEN 114 (FBAR)",                            "Apr 15 (ext. Oct 15)", "Review",    "Required if foreign financial accounts > $10,000 aggregate."),
+        ("9",  "Form 8938 (FATCA)",                            "With 1065",            "Review",    "Required if foreign assets > $50k. LME copper warehouse — confirm jurisdiction."),
+        # State filings
+        ("10", "NJ-1065 — New Jersey Partnership Return",      "Mar 15",               "Required",  "Alpine Estate (Bergen County). NJ source income from property."),
+        ("11", "CT-1065 — Connecticut Partnership Return",     "Mar 15",               "Required",  "Farmington Farm (Hartford County). CT Farm Tax exemption — attach documentation."),
+        ("12", "CA 565 — California Partnership Return",       "Mar 15",               "Required",  "Beverly Hills Estate (LA County). CA source income from property."),
+        # Action items / flags
+        ("13", "⚠ Cost Basis Records",                         "Before filing",        "MISSING",   "No cost basis on record for any asset. Obtain purchase confirmations, broker confirms."),
+        ("14", "⚠ Q1 2026 Estimated Tax",                      "Apr 15, 2026",         "URGENT",    f"${quarterly:,.0f} federal payment due. Late = 0.5%/month underpayment penalty."),
+        ("15", "⚠ Business-Use % for Rolls-Royce Spectre",     "Before filing",        "REQUIRED",  "Mixed personal/business use — apportion depreciation to business-use %."),
+        ("16", "Section 199A QBI Election",                    "With 1065",            "Required",  f"20% QBI deduction. 2026 threshold: $203k (single) / $406k (MFJ)."),
+        ("17", "CT Farm Conservation Easement",                "Review",               "Optional",  "Farmington Farm: conservation easement deduction may yield significant savings."),
+        ("18", "Alpine NJ — Bid Outcome",                      "Pending",              "Monitor",   "Status: pending. If closed, update acquisition date and cost basis."),
+        ("19", "Beverly Hills — LTV Credit Facility",          "At close",             "Monitor",   "60% LTV on $100M appraised = $60M facility at SOFR+240 (6.05%). Confirm lender."),
+        ("20", "LME Copper — Collateral Agreement",            "On file",              "Review",    "Confirm J.P. Morgan facility terms. Mark-to-market rules may apply."),
+    ]
+
+    for ri, row_data in enumerate(checklist, start=5):
+        num, form, due, status, details = row_data
+        ws_chk.cell(row=ri, column=1, value=num)
+        ws_chk.cell(row=ri, column=2, value=form)
+        ws_chk.cell(row=ri, column=3, value=due)
+        status_cell = ws_chk.cell(row=ri, column=4, value=status)
+        ws_chk.cell(row=ri, column=5, value=details)
+        if status in ("MISSING", "URGENT"):
+            status_cell.font = Font(bold=True, color="E05C5C")
+        elif status == "Generated":
+            status_cell.font = Font(color="4CAF50")
+        elif status == "Required":
+            status_cell.font = Font(color="4F8EF7")
+
+    _auto_width(ws_chk)
 
     buf = io.BytesIO()
     wb.save(buf)
