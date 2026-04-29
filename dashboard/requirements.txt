@@ -1,0 +1,4 @@
+vaderSentiment
+pandas
+plotly
+streamlit
