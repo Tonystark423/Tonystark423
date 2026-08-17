@@ -272,6 +272,25 @@ class TestListAssets:
         assert resp.status_code == 200
         assert resp.get_json() == []
 
+    def test_fts_search_ignores_parser_characters(self, client, auth):
+        resp = client.post("/api/assets", auth=auth, json={
+            "asset_name": "PMAX - Powell Max Limited",
+            "category": "Securities & Commodities",
+            "custodian": "JAN / Powell Max Limited",
+            "status": "active",
+        })
+        assert resp.status_code == 201
+
+        search_resp = client.get("/api/assets?q=JAN / Powell", auth=auth)
+        assert search_resp.status_code == 200
+        results = search_resp.get_json()
+        assert any(a["asset_name"] == "PMAX - Powell Max Limited" for a in results)
+
+    def test_parser_character_only_search_behaves_like_empty_search(self, client, auth, seed_asset):
+        resp = client.get("/api/assets?q=%2F%2F%2F", auth=auth)
+        assert resp.status_code == 200
+        assert len(resp.get_json()) >= 1
+
     def test_category_filter_direct_path(self, client, auth, seed_asset):
         """Exercises the no-q + category filter branch."""
         resp = client.get("/api/assets?category=Money+Market+Funds", auth=auth)

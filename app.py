@@ -3,6 +3,7 @@
 import csv
 import io
 import os
+import re
 import sqlite3
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -80,6 +81,14 @@ def validate_fields(fields: dict) -> tuple[dict, str | None]:
     return fields, None
 
 
+def build_assets_fts_query(raw_query: str) -> str | None:
+    """Convert user search text into a safe FTS5 prefix query."""
+    terms = re.findall(r"\w+", raw_query, flags=re.UNICODE)
+    if not terms:
+        return None
+    return " ".join(f"{term}*" for term in terms)
+
+
 # ---------------------------------------------------------------------------
 # Database helpers
 # ---------------------------------------------------------------------------
@@ -139,14 +148,16 @@ def list_assets():
 
     params = []
 
-    if q:
+    fts_query = build_assets_fts_query(q)
+
+    if fts_query:
         sql = """
             SELECT a.*
             FROM assets a
             JOIN assets_fts f ON a.id = f.rowid
             WHERE assets_fts MATCH ?
         """
-        params.append(q + "*")
+        params.append(fts_query)
         if category:
             sql += " AND a.category = ?"
             params.append(category)
