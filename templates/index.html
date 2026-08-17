@@ -3,173 +3,149 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Stark Financial Holdings LLC — Asset Ledger</title>
+  <title>Website Traffic Analytics</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <div class="header-inner">
-      <h1>Stark Financial Holdings LLC</h1>
-      <span class="subtitle">Asset Ledger</span>
-    </div>
-    <div class="header-actions">
-      <button id="exportBtn" class="btn btn-secondary">Export CSV</button>
-      <button id="addBtn" class="btn btn-primary">+ Add Asset</button>
-    </div>
-  </header>
-
-  <main>
-    <nav class="tab-bar">
-      <button class="tab-btn active" data-tab="assets">Assets</button>
-      <button class="tab-btn" data-tab="tax">Tax Filing</button>
-    </nav>
-
-    <!-- ===== Assets Section ===== -->
-    <section id="section-assets" class="tab-section">
-      <div class="toolbar">
-        <input type="search" id="searchInput" placeholder="Search assets…" autocomplete="off">
-        <select id="categoryFilter">
-          <option value="">All Categories</option>
-          <option value="Proprietary IP">Proprietary IP</option>
-          <option value="Computer Resources">Computer Resources</option>
-          <option value="Money Market Funds">Money Market Funds</option>
-          <option value="Securities &amp; Commodities">Securities &amp; Commodities</option>
-          <option value="Cryptocurrency">Cryptocurrency</option>
-          <option value="Real Estate">Real Estate</option>
-        </select>
-        <select id="statusFilter">
-          <option value="">All Statuses</option>
-          <option value="active">Active</option>
-          <option value="pending">Pending</option>
-          <option value="sold">Sold</option>
-        </select>
+  <div class="page-wrap">
+    <header class="topbar">
+      <h1>Website Traffic Analytics</h1>
+      <div class="top-actions" aria-label="Dashboard actions">
+        <span>✉</span>
+        <span>🔔</span>
+        <span>◔</span>
+        <span>👤</span>
       </div>
+    </header>
 
-      <div class="table-wrap">
-        <table id="assetsTable">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Category</th>
-              <th>Subcategory</th>
-              <th>Value (USD)</th>
-              <th>Quantity</th>
-              <th>Custodian</th>
-              <th>Status</th>
-              <th>Acquired</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="assetsBody">
-            <tr><td colspan="9" class="empty">Loading…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <main class="dashboard">
+      <section class="stats-grid">
+        <article class="stat-card">
+          <p>Total Visits</p>
+          <div class="metric">128,450 <span class="trend up">▲ 5.2%</span></div>
+        </article>
+        <article class="stat-card">
+          <p>Unique Visitors</p>
+          <div class="metric">85,920 <span class="trend up">▲ 3.8%</span></div>
+        </article>
+        <article class="stat-card">
+          <p>Avg. Visit Duration</p>
+          <div class="metric">03:45 <span class="trend down">▼ -2.1%</span></div>
+        </article>
+        <article class="stat-card">
+          <p>Bounce Rate</p>
+          <div class="metric">47.6% <span class="trend down">▼ -1.5%</span></div>
+        </article>
+      </section>
 
-    <!-- ===== Tax Filing Section ===== -->
-    <section id="section-tax" class="tab-section hidden">
-      <div class="toolbar">
-        <button id="refreshTaxBtn" class="btn btn-secondary">Refresh Summary</button>
-        <button id="fileTaxBtn" class="btn btn-primary">Download Tax Filing</button>
-      </div>
-      <div id="taxSummaryContent">
-        <p class="empty" style="padding:40px 0;">Click <strong>Refresh Summary</strong> to compute your tax summary.</p>
-      </div>
-    </section>
-  </main>
-
-  <!-- ===== Asset Modal ===== -->
-  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-    <div class="modal-backdrop"></div>
-    <div class="modal-box">
-      <h2 id="modalTitle">Add Asset</h2>
-      <form id="assetForm" novalidate>
-        <input type="hidden" id="assetId">
-
-        <div class="form-row">
-          <div class="form-group">
-            <label for="f_asset_name">Asset Name <span class="req">*</span></label>
-            <input type="text" id="f_asset_name" name="asset_name" required>
+      <section class="overview-grid">
+        <article class="panel traffic-overview">
+          <div class="panel-header">
+            <h2>Traffic Overview</h2>
+            <div class="segmented">
+              <button class="active">Daily</button>
+              <button>Weekly</button>
+              <button>Monthly</button>
+            </div>
           </div>
-          <div class="form-group">
-            <label for="f_category">Category <span class="req">*</span></label>
-            <select id="f_category" name="category" required>
-              <option value="">Select…</option>
-              <option value="Proprietary IP">Proprietary IP</option>
-              <option value="Computer Resources">Computer Resources</option>
-              <option value="Money Market Funds">Money Market Funds</option>
-              <option value="Securities &amp; Commodities">Securities &amp; Commodities</option>
-              <option value="Cryptocurrency">Cryptocurrency</option>
-              <option value="Real Estate">Real Estate</option>
-            </select>
+          <div class="chart-wrap">
+            <svg viewBox="0 0 640 250" role="img" aria-label="Traffic trend chart">
+              <defs>
+                <linearGradient id="blueFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#2d7de5" stop-opacity="0.35" />
+                  <stop offset="100%" stop-color="#2d7de5" stop-opacity="0" />
+                </linearGradient>
+                <linearGradient id="purpleFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#8d5ee8" stop-opacity="0.35" />
+                  <stop offset="100%" stop-color="#8d5ee8" stop-opacity="0" />
+                </linearGradient>
+              </defs>
+              <g class="grid-lines">
+                <line x1="0" y1="40" x2="640" y2="40" />
+                <line x1="0" y1="95" x2="640" y2="95" />
+                <line x1="0" y1="150" x2="640" y2="150" />
+                <line x1="0" y1="205" x2="640" y2="205" />
+              </g>
+              <path d="M20,210 L120,150 L220,175 L320,112 L420,160 L520,125 L620,170 L620,230 L20,230 Z" fill="url(#blueFill)" />
+              <path d="M20,225 L120,180 L220,195 L320,135 L420,175 L520,98 L620,145 L620,230 L20,230 Z" fill="url(#purpleFill)" />
+              <polyline points="20,210 120,150 220,175 320,112 420,160 520,125 620,170" class="line visitors" />
+              <polyline points="20,225 120,180 220,195 320,135 420,175 520,98 620,145" class="line pageviews" />
+            </svg>
           </div>
-        </div>
-
-        <div class="form-row">
-          <div class="form-group">
-            <label for="f_subcategory">Subcategory</label>
-            <input type="text" id="f_subcategory" name="subcategory" placeholder="e.g. Patent, Algorithm, SPAXX, HBM4">
+          <div class="legend">
+            <span><i class="dot visitors"></i>Visitors</span>
+            <span><i class="dot pageviews"></i>Pageviews</span>
           </div>
-          <div class="form-group">
-            <label for="f_status">Status</label>
-            <select id="f_status" name="status">
-              <option value="active">Active</option>
-              <option value="pending">Pending</option>
-              <option value="sold">Sold</option>
-            </select>
+        </article>
+
+        <article class="panel audience-panel">
+          <h2>Audience by Device</h2>
+          <div class="device-chart">
+            <div class="donut"><span>52%<small>Desktop</small></span></div>
+            <ul>
+              <li><strong style="color:#2d7de5;">52%</strong> Desktop</li>
+              <li><strong style="color:#4cb963;">32%</strong> Mobile</li>
+              <li><strong style="color:#ff9f43;">16%</strong> Tablet</li>
+            </ul>
           </div>
-        </div>
+        </article>
+      </section>
 
-        <div class="form-group full">
-          <label for="f_description">Description</label>
-          <textarea id="f_description" name="description" rows="2"></textarea>
-        </div>
+      <section class="detail-grid">
+        <article class="panel">
+          <h2>Top Traffic Sources</h2>
+          <ul class="source-list">
+            <li><span>Organic Search</span><div class="bar"><i style="width:45%;background:#2d7de5"></i></div><b>45%</b></li>
+            <li><span>Direct</span><div class="bar"><i style="width:25%;background:#8d5ee8"></i></div><b>25%</b></li>
+            <li><span>Social</span><div class="bar"><i style="width:18%;background:#63c27b"></i></div><b>18%</b></li>
+            <li><span>Referral</span><div class="bar"><i style="width:12%;background:#f07b3f"></i></div><b>12%</b></li>
+          </ul>
+        </article>
 
-        <div class="form-row">
-          <div class="form-group">
-            <label for="f_quantity">Quantity</label>
-            <input type="number" id="f_quantity" name="quantity" step="any">
+        <article class="panel">
+          <h2>Geographic Distribution</h2>
+          <div class="geo-box">
+            <div class="map-placeholder">🌎</div>
+            <ul>
+              <li>United States <b>38%</b></li>
+              <li>Germany <b>15%</b></li>
+              <li>India <b>12%</b></li>
+            </ul>
           </div>
-          <div class="form-group">
-            <label for="f_unit">Unit</label>
-            <input type="text" id="f_unit" name="unit" placeholder="e.g. shares, BTC, TB">
-          </div>
-          <div class="form-group">
-            <label for="f_estimated_value">Estimated Value (USD)</label>
-            <input type="number" id="f_estimated_value" name="estimated_value" step="any" min="0">
-          </div>
-        </div>
+        </article>
 
-        <div class="form-row">
-          <div class="form-group">
-            <label for="f_acquisition_date">Acquisition Date</label>
-            <input type="date" id="f_acquisition_date" name="acquisition_date">
-          </div>
-          <div class="form-group">
-            <label for="f_custodian">Custodian / Institution</label>
-            <input type="text" id="f_custodian" name="custodian" placeholder="e.g. Fidelity, Coinbase">
-          </div>
-        </div>
+        <article class="panel realtime">
+          <h2>Real-Time Metrics</h2>
+          <p class="live-now">Now <span id="activeVisitors">32</span> Active Visitors on Site</p>
+          <ul>
+            <li><span>Page View</span><small id="currentTime">--:-- --</small></li>
+            <li><span>New User · Anaheim, CA</span><small>11:07 AM</small></li>
+            <li><span>Page View · /blog-post</span><small>11:06 AM</small></li>
+            <li><span>Conversion Completed</span><small>11:05 AM</small></li>
+            <li><span>Page View · /home</span><small>11:04 AM</small></li>
+          </ul>
+        </article>
+      </section>
 
-        <div class="form-group full">
-          <label for="f_beneficial_owner">Beneficial Owner</label>
-          <input type="text" id="f_beneficial_owner" name="beneficial_owner">
-        </div>
+      <section class="bottom-grid">
+        <article class="panel">
+          <h2>Top Pages</h2>
+          <ul class="mini-table">
+            <li><span>/home</span><b>34,200</b></li>
+            <li><span>/blog-post</span><b>18,750</b></li>
+            <li><span>/pricing</span><b>12,480</b></li>
+          </ul>
+        </article>
 
-        <div class="form-group full">
-          <label for="f_notes">Notes</label>
-          <textarea id="f_notes" name="notes" rows="2"></textarea>
-        </div>
-
-        <div id="formError" class="form-error hidden"></div>
-
-        <div class="modal-footer">
-          <button type="button" id="cancelBtn" class="btn btn-secondary">Cancel</button>
-          <button type="submit" id="saveBtn" class="btn btn-primary">Save</button>
-        </div>
-      </form>
-    </div>
+        <article class="panel">
+          <h2>Goals Completed</h2>
+          <ul class="mini-table">
+            <li><span>Sales Conversions</span><b>4,760</b></li>
+            <li><span>Newsletter Signups</span><b>3,120</b></li>
+          </ul>
+        </article>
+      </section>
+    </main>
   </div>
 
   <script src="/static/app.js"></script>
