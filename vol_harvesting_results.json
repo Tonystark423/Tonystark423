@@ -1,0 +1,174 @@
+{
+  "iv_rv_spread": {
+    "vix": 35.0,
+    "implied_vol": 0.35,
+    "realised_vol": 0.18,
+    "spread": 0.16999999999999998,
+    "iv_rv_ratio": 1.9444444444444444,
+    "regime": "SPIKE       (VIX 28\u201340)  \u2014 peak premium, primary harvest zone",
+    "harvestable": true,
+    "premium_quality": "RICH     \u2014 spike territory, good entry"
+  },
+  "decay_path": [
+    {
+      "day": 0,
+      "vix": 35.0,
+      "premium_pct_left": 1.0,
+      "premium_decayed": 0.0
+    },
+    {
+      "day": 1,
+      "vix": 33.821649793048095,
+      "premium_pct_left": 0.9306852819440056,
+      "premium_decayed": 0.06931471805599443
+    },
+    {
+      "day": 2,
+      "vix": 32.724976598462284,
+      "premium_pct_left": 0.8661750940271932,
+      "premium_decayed": 0.13382490597280683
+    },
+    {
+      "day": 3,
+      "vix": 31.704318997158754,
+      "premium_pct_left": 0.8061364115975738,
+      "premium_decayed": 0.19386358840242623
+    },
+    {
+      "day": 4,
+      "vix": 30.754407989721287,
+      "premium_pct_left": 0.7502592935130169,
+      "premium_decayed": 0.2497407064869831
+    },
+    {
+      "day": 5,
+      "vix": 29.87033979594263,
+      "premium_pct_left": 0.6982552821142723,
+      "premium_decayed": 0.30174471788572765
+    },
+    {
+      "day": 6,
+      "vix": 29.047550539758014,
+      "premium_pct_left": 0.6498559141034126,
+      "premium_decayed": 0.3501440858965874
+    },
+    {
+      "day": 7,
+      "vix": 28.281792688885336,
+      "premium_pct_left": 0.6048113346403139,
+      "premium_decayed": 0.3951886653596861
+    },
+    {
+      "day": 8,
+      "vix": 27.569113127545062,
+      "premium_pct_left": 0.5628890075026507,
+      "premium_decayed": 0.4371109924973493
+    },
+    {
+      "day": 9,
+      "vix": 26.90583274906336,
+      "premium_pct_left": 0.5238725146507859,
+      "premium_decayed": 0.4761274853492141
+    },
+    {
+      "day": 10,
+      "vix": 26.28852746300819,
+      "premium_pct_left": 0.4875604390004818,
+      "premium_decayed": 0.5124395609995183
+    },
+    {
+      "day": 11,
+      "vix": 25.71401051881041,
+      "premium_pct_left": 0.4537653246359066,
+      "premium_decayed": 0.5462346753640934
+    },
+    {
+      "day": 12,
+      "vix": 25.17931605461809,
+      "premium_pct_left": 0.42231270909518187,
+      "premium_decayed": 0.5776872909048181
+    },
+    {
+      "day": 13,
+      "vix": 24.681683786457363,
+      "premium_pct_left": 0.39304022273278605,
+      "premium_decayed": 0.606959777267214
+    },
+    {
+      "day": 14,
+      "vix": 24.21854475865976,
+      "premium_pct_left": 0.3657967505093977,
+      "premium_decayed": 0.6342032494906022
+    },
+    {
+      "day": 15,
+      "vix": 23.787508081994677,
+      "premium_pct_left": 0.3404416518820398,
+      "premium_decayed": 0.6595583481179602
+    },
+    {
+      "day": 16,
+      "vix": 23.386348591044428,
+      "premium_pct_left": 0.31684403476731926,
+      "premium_decayed": 0.6831559652326807
+    },
+    {
+      "day": 17,
+      "vix": 23.01299535710488,
+      "premium_pct_left": 0.2948820798296989,
+      "premium_decayed": 0.7051179201703011
+    },
+    {
+      "day": 18,
+      "vix": 22.665520997311148,
+      "premium_pct_left": 0.27444241160653815,
+      "premium_decayed": 0.7255575883934618
+    },
+    {
+      "day": 19,
+      "vix": 22.342131724798204,
+      "premium_pct_left": 0.25541951322342377,
+      "premium_decayed": 0.7445804867765762
+    },
+    {
+      "day": 20,
+      "vix": 22.041158088531827,
+      "premium_pct_left": 0.23771518167834274,
+      "premium_decayed": 0.7622848183216573
+    },
+    {
+      "day": 21,
+      "vix": 21.76104635500554,
+      "premium_pct_left": 0.22123802088267883,
+      "premium_decayed": 0.7787619791173211
+    }
+  ],
+  "news_lag_cost": {
+    "immediate_entry_day": 1,
+    "news_entry_day": 7,
+    "pct_premium_at_entry_immediate": 0.9306852819440056,
+    "pct_premium_at_entry_news": 0.6048113346403139,
+    "premium_captured_immediate": 0.07445482255552045,
+    "premium_captured_news": 0.04838490677122511,
+    "premium_left_on_table": 0.026069915784295343,
+    "pct_of_spike_missed": 0.3258739473036918
+  },
+  "harvest_pnl": {
+    "total_pnl": 80829.03768654761,
+    "win_rate": 1.0,
+    "avg_win": 10103.629710818452,
+    "avg_loss": 0,
+    "payoff_ratio": Infinity
+  },
+  "term_structure": {
+    "spot_vix": 35.0,
+    "vix_1m": 30.0,
+    "vix_3m": 24.0,
+    "vix_6m": 21.0,
+    "shape": "BACKWARDATION \u2014 near-term panic; spike harvest opportunity",
+    "contango": false,
+    "backwardation": true,
+    "roll_yield_1m": -0.14285714285714285,
+    "harvest_signal": true
+  }
+}

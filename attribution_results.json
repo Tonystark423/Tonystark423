@@ -1,0 +1,39 @@
+{
+  "periods": [
+    {
+      "period": "2024-Q2",
+      "market_beta": 0.024,
+      "korea_alpha": 0.0063,
+      "mag7_avoidance": 0.01104,
+      "residual": 0.00966,
+      "total_explained": 0.04134,
+      "r_portfolio": 0.051
+    },
+    {
+      "period": "2024-Q3",
+      "market_beta": 0.0275,
+      "korea_alpha": 0.00195,
+      "mag7_avoidance": -0.01368,
+      "residual": 0.05223,
+      "total_explained": 0.01577,
+      "r_portfolio": 0.068
+    },
+    {
+      "period": "2024-Q4",
+      "market_beta": 0.0105,
+      "korea_alpha": 0.0084,
+      "mag7_avoidance": -0.0031,
+      "residual": 0.0282,
+      "total_explained": 0.0158,
+      "r_portfolio": 0.044
+    }
+  ],
+  "cumulative": {
+    "market_beta": 0.062000000000000006,
+    "korea_alpha": 0.016649999999999998,
+    "mag7_avoidance": -0.0057399999999999994,
+    "residual": 0.09009,
+    "r_portfolio": 0.16299999999999998,
+    "total_explained": 0.07291
+  }
+}

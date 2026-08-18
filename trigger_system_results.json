@@ -1,0 +1,96 @@
+[
+  {
+    "vix": 17.0,
+    "rules_fired": 0,
+    "orders": []
+  },
+  {
+    "vix": 31.0,
+    "rules_fired": 3,
+    "orders": [
+      {
+        "ladder": "Korea Arbitrage",
+        "rule": "Tranche 1 \u2014 initial entry",
+        "action": "BUY_KOREA",
+        "vix_trigger": 31.0,
+        "size_pct": 0.05,
+        "dollar_size": 50000.0,
+        "limit_price": null,
+        "order_type": "MARKET",
+        "notes": "5% of notional; discount typically 3\u20135% at VIX 28"
+      },
+      {
+        "ladder": "MAG7 Re-entry",
+        "rule": "Tranche 1 re-entry",
+        "action": "BUY_MAG7",
+        "vix_trigger": 31.0,
+        "size_pct": 0.04,
+        "dollar_size": 40000.0,
+        "limit_price": null,
+        "order_type": "MARKET",
+        "notes": "Begin rebuilding MAG7 weight at first VIX spike"
+      },
+      {
+        "ladder": "VIX Harvest",
+        "rule": "Sell SPY put \u2014 elevated",
+        "action": "SELL_PUT_SPY",
+        "vix_trigger": 31.0,
+        "size_pct": 0.03,
+        "dollar_size": 30000.0,
+        "limit_price": null,
+        "order_type": "MARKET",
+        "notes": "Sell 30-day SPY put; IV/RV ~1.4x; collect carry"
+      }
+    ]
+  },
+  {
+    "vix": 44.0,
+    "rules_fired": 4,
+    "orders": [
+      {
+        "ladder": "Korea Arbitrage",
+        "rule": "Tranche 3 \u2014 max allocation",
+        "action": "ADD_KOREA",
+        "vix_trigger": 44.0,
+        "size_pct": 0.08,
+        "dollar_size": 80000.0,
+        "limit_price": null,
+        "order_type": "MARKET",
+        "notes": "Full Korea weight hit; no further adds"
+      },
+      {
+        "ladder": "MAG7 Re-entry",
+        "rule": "Tranche 2 re-entry",
+        "action": "BUY_MAG7",
+        "vix_trigger": 44.0,
+        "size_pct": 0.05,
+        "dollar_size": 50000.0,
+        "limit_price": null,
+        "order_type": "MARKET",
+        "notes": "Crash territory; add more MAG7 at distressed prices"
+      },
+      {
+        "ladder": "VIX Harvest",
+        "rule": "Sell VIX put \u2014 panic",
+        "action": "SELL_VIX_PUT",
+        "vix_trigger": 44.0,
+        "size_pct": 0.07,
+        "dollar_size": 70000.0,
+        "limit_price": null,
+        "order_type": "MARKET",
+        "notes": "Panic premium; IV/RV >2.0x; maximum harvest size"
+      },
+      {
+        "ladder": "VIX Harvest",
+        "rule": "Deploy cash reserve",
+        "action": "DEPLOY_CASH",
+        "vix_trigger": 44.0,
+        "size_pct": 0.1,
+        "dollar_size": 100000.0,
+        "limit_price": null,
+        "order_type": "MARKET",
+        "notes": "Release 10% cash reserve; buy broad market at panic prices"
+      }
+    ]
+  }
+]

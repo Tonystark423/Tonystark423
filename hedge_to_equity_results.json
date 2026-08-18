@@ -1,0 +1,296 @@
+{
+  "valo_table": [
+    {
+      "ticker": "TSM",
+      "vix": 28.71,
+      "current": 323.0,
+      "limit_price": 288.41,
+      "discount_pct": 10.7
+    },
+    {
+      "ticker": "TSM",
+      "vix": 30,
+      "current": 323.0,
+      "limit_price": 284.24,
+      "discount_pct": 12.0
+    },
+    {
+      "ticker": "TSM",
+      "vix": 35,
+      "current": 323.0,
+      "limit_price": 268.09,
+      "discount_pct": 17.0
+    },
+    {
+      "ticker": "TSM",
+      "vix": 40,
+      "current": 323.0,
+      "limit_price": 251.94,
+      "discount_pct": 22.0
+    },
+    {
+      "ticker": "TSM",
+      "vix": 45,
+      "current": 323.0,
+      "limit_price": 235.79,
+      "discount_pct": 27.0
+    },
+    {
+      "ticker": "TSM",
+      "vix": 50,
+      "current": 323.0,
+      "limit_price": 219.64,
+      "discount_pct": 32.0
+    },
+    {
+      "ticker": "TSM",
+      "vix": 55,
+      "current": 323.0,
+      "limit_price": 203.49,
+      "discount_pct": 37.0
+    },
+    {
+      "ticker": "NVDA",
+      "vix": 28.71,
+      "current": 875.0,
+      "limit_price": 781.29,
+      "discount_pct": 10.7
+    },
+    {
+      "ticker": "NVDA",
+      "vix": 30,
+      "current": 875.0,
+      "limit_price": 770.0,
+      "discount_pct": 12.0
+    },
+    {
+      "ticker": "NVDA",
+      "vix": 35,
+      "current": 875.0,
+      "limit_price": 726.25,
+      "discount_pct": 17.0
+    },
+    {
+      "ticker": "NVDA",
+      "vix": 40,
+      "current": 875.0,
+      "limit_price": 682.5,
+      "discount_pct": 22.0
+    },
+    {
+      "ticker": "NVDA",
+      "vix": 45,
+      "current": 875.0,
+      "limit_price": 638.75,
+      "discount_pct": 27.0
+    },
+    {
+      "ticker": "NVDA",
+      "vix": 50,
+      "current": 875.0,
+      "limit_price": 595.0,
+      "discount_pct": 32.0
+    },
+    {
+      "ticker": "NVDA",
+      "vix": 55,
+      "current": 875.0,
+      "limit_price": 551.25,
+      "discount_pct": 37.0
+    },
+    {
+      "ticker": "KB",
+      "vix": 28.71,
+      "current": 58.0,
+      "limit_price": 51.79,
+      "discount_pct": 10.7
+    },
+    {
+      "ticker": "KB",
+      "vix": 30,
+      "current": 58.0,
+      "limit_price": 51.04,
+      "discount_pct": 12.0
+    },
+    {
+      "ticker": "KB",
+      "vix": 35,
+      "current": 58.0,
+      "limit_price": 48.14,
+      "discount_pct": 17.0
+    },
+    {
+      "ticker": "KB",
+      "vix": 40,
+      "current": 58.0,
+      "limit_price": 45.24,
+      "discount_pct": 22.0
+    },
+    {
+      "ticker": "KB",
+      "vix": 45,
+      "current": 58.0,
+      "limit_price": 42.34,
+      "discount_pct": 27.0
+    },
+    {
+      "ticker": "KB",
+      "vix": 50,
+      "current": 58.0,
+      "limit_price": 39.44,
+      "discount_pct": 32.0
+    },
+    {
+      "ticker": "KB",
+      "vix": 55,
+      "current": 58.0,
+      "limit_price": 36.54,
+      "discount_pct": 37.0
+    }
+  ],
+  "pivot_events": [
+    {
+      "label": "Target 1 \u2014 Initial rotation",
+      "vix_trigger": 35.0,
+      "hedge_sell_pct": 0.25,
+      "proceeds": 20000.0,
+      "hedge_remaining": 60000.0,
+      "allocations": [
+        {
+          "ticker": "TSM",
+          "dollars": 10000.0,
+          "limit_price": 268.09,
+          "shares": 37,
+          "discount_pct": 17.0
+        },
+        {
+          "ticker": "NVDA",
+          "dollars": 10000.0,
+          "limit_price": 726.25,
+          "shares": 13,
+          "discount_pct": 17.0
+        }
+      ]
+    },
+    {
+      "label": "Target 2 \u2014 Full rotation",
+      "vix_trigger": 45.0,
+      "hedge_sell_pct": 0.5,
+      "proceeds": 30000.0,
+      "hedge_remaining": 30000.0,
+      "allocations": [
+        {
+          "ticker": "TSM",
+          "dollars": 12000.0,
+          "limit_price": 235.79,
+          "shares": 50,
+          "discount_pct": 27.0
+        },
+        {
+          "ticker": "NVDA",
+          "dollars": 12000.0,
+          "limit_price": 638.75,
+          "shares": 18,
+          "discount_pct": 27.0
+        },
+        {
+          "ticker": "KB",
+          "dollars": 6000.0,
+          "limit_price": 42.34,
+          "shares": 141,
+          "discount_pct": 27.0
+        }
+      ]
+    },
+    {
+      "label": "Target 3 \u2014 Deploy remainder into Korea + broad market",
+      "vix_trigger": 55.0,
+      "hedge_sell_pct": 0.25,
+      "proceeds": 7500.0,
+      "hedge_remaining": 22500.0,
+      "allocations": [
+        {
+          "ticker": "KB",
+          "dollars": 4500.0,
+          "limit_price": 36.54,
+          "shares": 123,
+          "discount_pct": 37.0
+        },
+        {
+          "ticker": "SPY",
+          "dollars": 3000.0,
+          "limit_price": null,
+          "shares": null,
+          "discount_pct": null
+        }
+      ]
+    }
+  ],
+  "health_check": [
+    {
+      "label": "Pre-pivot (now)",
+      "tracking_error": 0.06787537599650308,
+      "active_share": 0.38500000000000006,
+      "mean_excess_pa": 0.07533333333333334,
+      "info_ratio": 1.1098772158140897,
+      "te_class": "MODERATE (4-7%)",
+      "as_class": "CLOSET INDEXER (<60%)"
+    },
+    {
+      "label": "Post T1 (VIX 35)",
+      "tracking_error": 0.06704824133910349,
+      "active_share": 0.335,
+      "mean_excess_pa": 0.09866666666666667,
+      "info_ratio": 1.4715772508879046,
+      "te_class": "MODERATE (4-7%)",
+      "as_class": "CLOSET INDEXER (<60%)"
+    },
+    {
+      "label": "Post T2 (VIX 45)",
+      "tracking_error": 0.06871098893190229,
+      "active_share": 0.33499999999999996,
+      "mean_excess_pa": 0.126,
+      "info_ratio": 1.8337678144157608,
+      "te_class": "MODERATE (4-7%)",
+      "as_class": "CLOSET INDEXER (<60%)"
+    }
+  ],
+  "vault_growth": [
+    {
+      "year": 0,
+      "vault_value": 1000000,
+      "herd_value": 1000000,
+      "vault_edge": 0
+    },
+    {
+      "year": 1,
+      "vault_value": 1195000.0,
+      "herd_value": 1100000.0,
+      "vault_edge": 95000.0
+    },
+    {
+      "year": 2,
+      "vault_value": 1428025.0,
+      "herd_value": 1210000.0,
+      "vault_edge": 218025.0
+    },
+    {
+      "year": 3,
+      "vault_value": 1706489.88,
+      "herd_value": 1331000.0,
+      "vault_edge": 375489.88
+    },
+    {
+      "year": 4,
+      "vault_value": 2039255.4,
+      "herd_value": 1464100.0,
+      "vault_edge": 575155.4
+    },
+    {
+      "year": 5,
+      "vault_value": 2436910.2,
+      "herd_value": 1610510.0,
+      "vault_edge": 826400.2
+    }
+  ]
+}
