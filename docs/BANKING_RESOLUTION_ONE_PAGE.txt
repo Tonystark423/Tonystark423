@@ -1,0 +1,83 @@
+================================================================================
+                    ONE-PAGE CORPORATE BANKING RESOLUTION
+================================================================================
+
+COMPANY: [COMPANY LEGAL NAME]
+ENTITY TYPE: [LLC/Corporation/Partnership]
+STATE: [STATE OF ORGANIZATION]
+EIN: [FEDERAL EMPLOYER IDENTIFICATION NUMBER]
+ADDRESS: [PRINCIPAL BUSINESS ADDRESS]
+
+--------------------------------------------------------------------------------
+
+AUTHORIZED SIGNATORIES (Single Signature Authority):
+
+1. Name: _______________________  Title: _______________  Sig: _____________
+2. Name: _______________________  Title: _______________  Sig: _____________
+3. Name: _______________________  Title: _______________  Sig: _____________
+
+--------------------------------------------------------------------------------
+
+AUTHORITY GRANTED:
+
+Each authorized signatory may independently: open/maintain/close bank accounts;
+deposit/withdraw/transfer funds; sign checks and negotiable instruments; borrow
+money and execute loan documents; overdraw accounts; use all banking services
+including wire transfers, ACH, credit cards; receive statements; execute stop
+payment orders; and perform all acts necessary for banking transactions.
+
+--------------------------------------------------------------------------------
+
+SIGNATURE AUTHORITY: Any ONE (1) authorized signatory may act on behalf of the
+Company. Each signature shall be binding and conclusive evidence of authority.
+
+--------------------------------------------------------------------------------
+
+RATIFICATION & INDEMNIFICATION:
+
+All acts of authorized signatories are ratified. Company indemnifies and holds
+harmless any bank from claims arising from authorized actions.
+
+--------------------------------------------------------------------------------
+
+CERTIFICATION:
+
+I, [NAME], [TITLE], certify that: (1) I am authorized to execute this resolution;
+(2) resolutions were duly adopted; (3) signatories are authorized and signatures are
+genuine; (4) this resolution is in full force and effect.
+
+Dated: _____/_____/20____
+
+____________________________________
+[NAME], [TITLE]
+
+--------------------------------------------------------------------------------
+
+NOTARY CERTIFICATE:
+
+STATE OF [STATE]  COUNTY OF [COUNTY]
+
+On _____/_____/20____, before me, [NOTARY NAME], Notary Public, personally
+appeared [NAME], known to me to be [TITLE] of [COMPANY NAME], and acknowledged
+execution of this instrument as the free act and deed of said Company.
+
+____________________________________
+Notary Public, State of [STATE]
+My Commission Expires: _____________
+Notary Seal: _____________________
+
+--------------------------------------------------------------------------------
+
+BANK USE ONLY:
+Account #: _____________  Bank: _____________________  Date Opened: _________
+
+================================================================================
+
+REQUIRED ATTACHMENTS:
+[ ] Certified Articles of Organization/Incorporation
+[ ] EIN Confirmation Letter (IRS CP 575)
+[ ] Certificate of Good Standing
+[ ] Operating Agreement/Bylaws
+[ ] Photo ID for each signatory
+
+================================================================================
