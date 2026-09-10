@@ -17,56 +17,12 @@ Assertion Density target: >= 0.66 per test (value zone).
 """
 
 import json
-import os
 import sqlite3
-import tempfile
-from unittest.mock import MagicMock, call, patch
-
-import pytest
-
-# Isolated database for this module
-_db_fd, _db_path = tempfile.mkstemp(suffix=".db")
-os.environ["DB_PATH"] = _db_path
-os.environ["LEDGER_USER"] = "testuser"
-os.environ["LEDGER_PASS"] = "testpass"
+from unittest.mock import MagicMock, patch
 
 import app as app_module  # noqa: E402
 
-
-# ---------------------------------------------------------------------------
-# Session-scoped DB setup
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="session", autouse=True)
-def init_database():
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "schema.sql")
-    with open(schema_path) as f:
-        schema = f.read()
-    conn = sqlite3.connect(_db_path)
-    conn.executescript(schema)
-    conn.close()
-    yield
-    os.close(_db_fd)
-    os.unlink(_db_path)
-
-
-@pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
-@pytest.fixture()
-def auth():
-    return ("testuser", "testpass")
-
-
-def direct_db():
-    """Open a direct connection to the test DB for state-verification reads."""
-    conn = sqlite3.connect(_db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+from conftest import direct_db  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -89,24 +45,26 @@ class TestDBCallSpy:
         Spy on execute() to confirm INSERT uses ? placeholders, not
         string interpolation (SQL-injection guard).
         """
-        real_conn = sqlite3.connect(_db_path)
+        real_conn = sqlite3.connect(app_module.DB_PATH)
         real_conn.row_factory = sqlite3.Row
         real_conn.execute("PRAGMA journal_mode=WAL")
 
         spy_conn = MagicMock(wraps=real_conn)
 
+        # Patch get_db for the duration of the request only. Using the test
+        # client (not a nested test_request_context) avoids the "Popped wrong
+        # request context" teardown error.
         with patch.object(app_module, "get_db", return_value=spy_conn):
-            with app_module.app.test_request_context():
-                client.post(
-                    "/api/assets",
-                    data=json.dumps({
-                        "asset_name": "Spy Test Asset",
-                        "category": "Cryptocurrency",
-                        "estimated_value": 9999.0,
-                    }),
-                    content_type="application/json",
-                    auth=auth,
-                )
+            client.post(
+                "/api/assets",
+                data=json.dumps({
+                    "asset_name": "Spy Test Asset",
+                    "category": "Cryptocurrency",
+                    "estimated_value": 9999.0,
+                }),
+                content_type="application/json",
+                auth=auth,
+            )
 
         # Collect every SQL string passed to execute()
         executed_sql = [
@@ -140,7 +98,7 @@ class TestDBCallSpy:
         asset_id = cur.lastrowid
         conn.close()
 
-        real_conn = sqlite3.connect(_db_path)
+        real_conn = sqlite3.connect(app_module.DB_PATH)
         real_conn.row_factory = sqlite3.Row
         real_conn.execute("PRAGMA journal_mode=WAL")
         spy_conn = MagicMock(wraps=real_conn)
@@ -213,9 +171,14 @@ class TestDBStateVerification:
 
         # Every payload field must match DB state exactly
         for field, expected in payload.items():
-            assert row[field] == expected, (
-                f"DB field {field!r} = {row[field]!r}, expected {expected!r}"
-            )
+            if isinstance(expected, (int, float)) and expected is not None:
+                assert float(row[field]) == float(expected), (
+                    f"DB field {field!r} = {row[field]!r}, expected {expected!r}"
+                )
+            else:
+                assert row[field] == expected, (
+                    f"DB field {field!r} = {row[field]!r}, expected {expected!r}"
+                )
 
         # Timestamps must be populated by the DB DEFAULT
         assert row["created_at"] is not None

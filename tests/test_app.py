@@ -8,52 +8,13 @@ Run:
 """
 
 import json
-import os
 import sqlite3
-import tempfile
 
 import pytest
 
-# Point at an isolated temp database before importing the app
-_db_fd, _db_path = tempfile.mkstemp(suffix=".db")
-os.environ["DB_PATH"] = _db_path
-os.environ["LEDGER_USER"] = "testuser"
-os.environ["LEDGER_PASS"] = "testpass"
-os.environ["FLASK_SECRET_KEY"] = "test-secret"
+import app as app_module  # noqa: E402  (env is set by conftest.py)
 
-import app as app_module  # noqa: E402  (must come after env setup)
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="session", autouse=True)
-def init_database():
-    """Create schema in the temp database once for the whole session."""
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "schema.sql")
-    with open(schema_path) as f:
-        schema = f.read()
-    conn = sqlite3.connect(_db_path)
-    conn.executescript(schema)
-    conn.close()
-    yield
-    # Cleanup
-    os.close(_db_fd)
-    os.unlink(_db_path)
-
-
-@pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
-@pytest.fixture()
-def auth():
-    """Valid Basic Auth credentials as a (user, pass) tuple."""
-    return ("testuser", "testpass")
+from conftest import direct_db  # noqa: E402
 
 
 @pytest.fixture()
@@ -184,8 +145,13 @@ class TestCreateAsset:
         )
         assert resp.status_code == 201
         data = resp.get_json()
+        # Numeric fields are stored as Decimal strings (4dp); compare by value
+        # so "512.0000" == 512.0 holds. All other fields compare by equality.
         for key, val in payload.items():
-            assert data[key] == val, f"Field {key!r} mismatch"
+            if isinstance(val, (int, float)) and val is not None:
+                assert float(data[key]) == float(val), f"Field {key!r} mismatch"
+            else:
+                assert data[key] == val, f"Field {key!r} mismatch"
 
     def test_invalid_category_rejected_by_db(self, client, auth):
         """SQLite CHECK constraint should reject an unrecognised category."""
@@ -214,8 +180,8 @@ class TestCreateAsset:
         assert data["estimated_value"] is None
         assert data["quantity"] is None
 
-    def test_negative_estimated_value_accepted(self, client, auth):
-        """Negative values are not blocked at the API layer (could represent liability)."""
+    def test_negative_estimated_value_rejected(self, client, auth):
+        """Precision gate rejects estimated_value <= 0 (validate_fields rule 1)."""
         resp = client.post(
             "/api/assets",
             data=json.dumps({
@@ -226,10 +192,14 @@ class TestCreateAsset:
             content_type="application/json",
             auth=auth,
         )
-        assert resp.status_code == 201
-        assert resp.get_json()["estimated_value"] == -5000.0
+        assert resp.status_code == 400
+        assert "greater than zero" in resp.get_json()["error"]
+        # Verify nothing was persisted (Pattern 4): row must not exist.
+        assert direct_db().execute(
+            "SELECT id FROM assets WHERE asset_name = 'Margin Position'").fetchone() is None
 
-    def test_zero_quantity_accepted(self, client, auth):
+    def test_zero_quantity_rejected(self, client, auth):
+        """Quantity integrity gate rejects quantity <= 0 (validate_fields rule 2)."""
         resp = client.post(
             "/api/assets",
             data=json.dumps({
@@ -241,8 +211,10 @@ class TestCreateAsset:
             content_type="application/json",
             auth=auth,
         )
-        assert resp.status_code == 201
-        assert resp.get_json()["quantity"] == 0.0
+        assert resp.status_code == 400
+        assert "greater than zero" in resp.get_json()["error"]
+        assert direct_db().execute(
+            "SELECT id FROM assets WHERE asset_name = 'Depleted Asset'").fetchone() is None
 
 
 # ---------------------------------------------------------------------------
@@ -452,11 +424,10 @@ class TestExportCSV:
     def test_export_empty_table_still_returns_header(self, client, auth):
         """Export with no data should still return a valid CSV with just the header."""
         # Wipe all records temporarily using a direct DB call
-        with app_module.app.app_context():
-            db = sqlite3.connect(_db_path)
-            db.execute("DELETE FROM assets")
-            db.commit()
-            db.close()
+        db = sqlite3.connect(app_module.DB_PATH)
+        db.execute("DELETE FROM assets")
+        db.commit()
+        db.close()
 
         resp = client.get("/api/export", auth=auth)
         assert resp.status_code == 200

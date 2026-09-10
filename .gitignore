@@ -10,3 +10,7 @@ dist/
 .DS_Store
 gpu_log.csv
 *.pid
+
+# pytest-cov coverage data (build artifact, never commit)
+.coverage
+.coverage.*

@@ -40,7 +40,11 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run tests with coverage
-        run: pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=80
+        # All four application modules are in scope so coverage reflects the
+        # real surface, not just app.py. Floor is set below the current combined
+        # coverage (ledger_processor/starkbank_sync were previously 0% and
+        # hidden by the app-only scope). Ratchet this up as test gaps close.
+        run: pytest tests/ -v --cov=app --cov=tax_engine --cov=ledger_processor --cov=starkbank_sync --cov-report=term-missing --cov-fail-under=50
 
       - name: Assertion Density Quality Gate
         # --diff-only: Boy Scout Rule — only checks functions touched in this PR.
