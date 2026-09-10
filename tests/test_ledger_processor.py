@@ -137,52 +137,62 @@ class TestProcessCsv:
         result = lp.process_csv(_csv(csv_text), db)
         assert result["inserted"] == 2
         assert result["skipped"] == 0
+        assert result["processed"] == 2
         assert result["errors"] == []
-
         rows = db.execute(
-            "SELECT asset_name, category, custodian FROM assets ORDER BY asset_name"
+            "SELECT asset_name, category, estimated_value, custodian "
+            "FROM assets ORDER BY asset_name"
         ).fetchall()
         assert [r["asset_name"] for r in rows] == ["BTC", "NVDA"]
-        assert rows[1]["custodian"] == "Fidelity"
         assert rows[0]["category"] == "Cryptocurrency"
+        assert rows[0]["estimated_value"] == "1000.0000"
+        assert rows[0]["custodian"] == "Coinbase"
+        assert rows[1]["custodian"] == "Fidelity"
+        assert rows[1]["estimated_value"] == "50000.0000"
 
     def test_alias_columns_mapped_to_ledger_fields(self, make_db):
-        csv_text = (
-            "name,asset_class,amount,broker\n"
-            "AAPL,Stocks,250,Schwab\n"
-        )
+        csv_text = "name,asset_class,amount,broker\nAAPL,Stocks,250,Schwab\n"
         db = make_db()
         result = lp.process_csv(_csv(csv_text), db)
         assert result["inserted"] == 1
+        assert result["errors"] == []
         row = db.execute(
-            "SELECT asset_name, category, estimated_value, custodian FROM assets"
+            "SELECT asset_name, category, estimated_value, custodian, subcategory "
+            "FROM assets"
         ).fetchone()
         assert row["asset_name"] == "AAPL"
         assert row["category"] == "Securities & Commodities"  # "Stocks" heuristics fallback
         assert row["estimated_value"] == "250.0000"
         assert row["custodian"] == "Schwab"
+        assert row["subcategory"] == "Credit/Income"  # derived from positive amount
 
     def test_currency_cleaned_dollar_commas(self, make_db):
         csv_text = "asset_name,category,value\nNVDA,Securities & Commodities,\"$50,000.00\"\n"
         db = make_db()
-        lp.process_csv(_csv(csv_text), db)
-        row = db.execute("SELECT estimated_value FROM assets").fetchone()
+        result = lp.process_csv(_csv(csv_text), db)
+        assert result["inserted"] == 1
+        assert result["errors"] == []
+        row = db.execute("SELECT asset_name, estimated_value FROM assets").fetchone()
         assert row["estimated_value"] == "50000.0000"
+        assert row["asset_name"] == "NVDA"
 
     def test_decimal_coercion_no_float_drift(self, make_db):
         csv_text = "asset_name,category,estimated_value\nDrift,Securities & Commodities,0.29\n"
         db = make_db()
-        lp.process_csv(_csv(csv_text), db)
+        result = lp.process_csv(_csv(csv_text), db)
+        assert result["inserted"] == 1
         row = db.execute("SELECT estimated_value FROM assets").fetchone()
         assert row["estimated_value"] == "0.2900"
 
     def test_duplicate_rows_skipped_not_inserted(self, make_db):
         row_text = "asset_name,category,estimated_value\nNVDA,Securities & Commodities,50000\n"
         db = make_db()
-        lp.process_csv(_csv(row_text), db)
+        first = lp.process_csv(_csv(row_text), db)
         result = lp.process_csv(_csv(row_text), db)
+        assert first["inserted"] == 1
         assert result["inserted"] == 0
         assert result["skipped"] == 1
+        assert result["errors"] == []
         count = db.execute("SELECT COUNT(*) AS n FROM assets").fetchone()["n"]
         assert count == 1
 
@@ -190,6 +200,8 @@ class TestProcessCsv:
         db = make_db()
         result = lp.process_csv(_csv("asset_name,category\n"), db)
         assert result["inserted"] == 0
+        assert result["processed"] == 0
+        assert len(result["errors"]) == 1
         assert "empty" in result["errors"][0].lower()
 
     def test_missing_asset_name_column_returns_error(self, make_db):
@@ -197,35 +209,38 @@ class TestProcessCsv:
         db = make_db()
         result = lp.process_csv(_csv(csv_text), db)
         assert result["inserted"] == 0
+        assert len(result["errors"]) == 1
         assert "asset_name" in result["errors"][0]
 
     def test_nonexistent_file_path_returns_error(self, make_db):
         db = make_db()
         result = lp.process_csv("/no/such/file_xyz.csv", db)
         assert result["inserted"] == 0
+        assert len(result["errors"]) == 1
         assert "not found" in result["errors"][0].lower()
 
     def test_blank_asset_name_rows_dropped(self, make_db):
-        csv_text = (
-            "asset_name,category\n"
-            "  ,Cryptocurrency\n"
-            "RealAsset,Cryptocurrency\n"
-        )
+        csv_text = "asset_name,category\n  ,Cryptocurrency\nRealAsset,Cryptocurrency\n"
         db = make_db()
         result = lp.process_csv(_csv(csv_text), db)
         assert result["inserted"] == 1
+        assert result["errors"] == []
         count = db.execute("SELECT COUNT(*) AS n FROM assets").fetchone()["n"]
         assert count == 1
+        name = db.execute("SELECT asset_name FROM assets").fetchone()["asset_name"]
+        assert name == "RealAsset"
 
     def test_default_owner_and_custodian_stamped(self, make_db):
         csv_text = "asset_name,category\nBTC,Cryptocurrency\n"
         db = make_db()
-        lp.process_csv(_csv(csv_text), db,
+        result = lp.process_csv(_csv(csv_text), db,
                        default_beneficial_owner="Stark Holdings",
                        default_custodian="Stark Bank")
+        assert result["inserted"] == 1
         row = db.execute(
-            "SELECT custodian, beneficial_owner FROM assets"
+            "SELECT asset_name, custodian, beneficial_owner FROM assets"
         ).fetchone()
+        assert row["asset_name"] == "BTC"
         assert row["custodian"] == "Stark Bank"
         assert row["beneficial_owner"] == "Stark Holdings"
 
@@ -272,12 +287,17 @@ class TestCheckBudgets:
         results = lp.check_budgets(df)
         tech = next(r for r in results if r["category"] == "Technology")
         assert tech["status"] == "warning"
+        assert tech["limit"] == 5000.0
+        assert tech["actual"] == 4500.0
+        assert tech["variance"] == 500.0
 
     def test_ok_status_below_threshold(self):
         df = self._df([("Expense", "Technology", 1000)])
         results = lp.check_budgets(df)
         tech = next(r for r in results if r["category"] == "Technology")
         assert tech["status"] == "ok"
+        assert tech["actual"] == 1000.0
+        assert tech["variance"] == 4000.0
 
     def test_custom_limits_override_defaults(self):
         df = self._df([("Expense", "Technology", 6000)])
@@ -285,3 +305,5 @@ class TestCheckBudgets:
         tech = next(r for r in results if r["category"] == "Technology")
         assert tech["status"] == "ok"
         assert tech["limit"] == 10000.0
+        assert tech["actual"] == 6000.0
+        assert tech["variance"] == 4000.0

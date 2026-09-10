@@ -16,6 +16,7 @@ documents that current behavior; the fix is a schema/design decision
 (add "Bank Transaction" to the CHECK, or remap to an allowed category).
 """
 
+from contextlib import contextmanager
 import sqlite3
 from datetime import datetime
 from types import SimpleNamespace
@@ -62,11 +63,13 @@ class TestTxToFields:
     def test_category_is_bank_transaction(self):
         fields = sync_mod._tx_to_fields(_tx())
         assert fields["category"] == "Bank Transaction"
+        assert fields["subcategory"] == "credit"
 
     def test_description_falls_back_when_blank(self):
         tx = _tx(description="   ", tx_id="abc")
         fields = sync_mod._tx_to_fields(tx)
         assert fields["asset_name"] == "Stark Bank credit abc"
+        assert fields["description"] == "Stark Bank credit abc"
 
     def test_notes_contains_starkbank_id_marker(self):
         fields = sync_mod._tx_to_fields(_tx(tx_id="TXN-99"))
@@ -86,75 +89,71 @@ class TestTxToFields:
         assert fields["custodian"] == "Stark Bank"
 
 
+
 # ---------------------------------------------------------------------------
 # sync_transactions — mocked starkbank.transaction.query, real in-memory DB
 # ---------------------------------------------------------------------------
 
+@contextmanager
+def _mocked_query(txs):
+    """Patch _get_project + starkbank.transaction so query() yields `txs`."""
+    with mock.patch.object(sync_mod, "_get_project", return_value=None), \
+         mock.patch.object(sync_mod.starkbank, "transaction") as txn:
+        txn.query.return_value = iter(txs)
+        yield txn
+
+
 class TestSyncTransactions:
     def test_dedup_skips_existing_starkbank_id(self, make_db):
         db = make_db()
-        # Pre-insert an asset whose notes carry the starkbank_id marker
-        marker = "starkbank_id=DUP-1"
         db.execute(
             "INSERT INTO assets (asset_name, category, notes) VALUES (?, ?, ?)",
-            ("Existing", "Cryptocurrency", marker),
+            ("Existing", "Cryptocurrency", "starkbank_id=DUP-1"),
         )
         db.commit()
-
-        txs = [_tx(tx_id="DUP-1"), _tx(tx_id="NEW-1")]
-        with mock.patch.object(sync_mod, "_get_project", return_value=None), \
-             mock.patch.object(sync_mod.starkbank, "transaction") as txn:
-            txn.query.return_value = iter(txs)
-            # NEW-1 insert will raise IntegrityError (category=Bank Transaction);
-            # documented below. Wrap to capture the documented failure.
+        with _mocked_query([_tx(tx_id="DUP-1"), _tx(tx_id="NEW-1")]) as txn:
             with pytest.raises(sqlite3.IntegrityError):
                 sync_mod.sync_transactions(db, limit=10)
-
-        # The duplicate was detected and skipped BEFORE the failing insert,
-        # so no spurious row for DUP-1 should have been created beyond the seed.
-        rows = db.execute(
-            "SELECT notes FROM assets WHERE notes LIKE '%DUP-1%'"
-        ).fetchall()
+        # The duplicate was skipped BEFORE the failing insert, so only the seed row exists.
+        rows = db.execute("SELECT notes FROM assets WHERE notes LIKE '%DUP-1%'").fetchall()
         assert len(rows) == 1
+        assert rows[0]["notes"] == "starkbank_id=DUP-1"
+        new_rows = db.execute("SELECT id FROM assets WHERE notes LIKE '%NEW-1%'").fetchall()
+        assert new_rows == []
+        assert txn.query.call_args.kwargs["limit"] == 10
+        assert txn.query.call_count == 1
 
     def test_insert_rejected_by_category_check_documents_bug(self, make_db):
-        """
-        KNOWN BUG: _tx_to_fields sets category="Bank Transaction", which the
-        assets CHECK constraint rejects. sync_transactions does not catch the
-        IntegrityError, so the first non-duplicate transaction aborts the
-        entire sync. This test asserts that current behavior.
-        """
+        """KNOWN BUG: category="Bank Transaction" is rejected by the assets
+        CHECK constraint; sync_transactions does not catch the IntegrityError,
+        so the first non-duplicate transaction aborts the whole sync."""
         db = make_db()
-        txs = [_tx(tx_id="BUG-1", amount=1000)]
-        with mock.patch.object(sync_mod, "_get_project", return_value=None), \
-             mock.patch.object(sync_mod.starkbank, "transaction") as txn:
-            txn.query.return_value = iter(txs)
+        with _mocked_query([_tx(tx_id="BUG-1", amount=1000)]) as txn:
             with pytest.raises(sqlite3.IntegrityError):
                 sync_mod.sync_transactions(db, limit=10)
-
-        # Nothing was committed for the rejected transaction.
-        rows = db.execute(
-            "SELECT id FROM assets WHERE notes LIKE '%BUG-1%'"
-        ).fetchall()
+        rows = db.execute("SELECT id FROM assets WHERE notes LIKE '%BUG-1%'").fetchall()
         assert rows == []
+        assert txn.query.call_count == 1
+        assert db.execute("SELECT COUNT(*) AS n FROM assets").fetchone()["n"] == 0
 
     def test_empty_transaction_list_returns_zeros(self, make_db):
         db = make_db()
-        with mock.patch.object(sync_mod, "_get_project", return_value=None), \
-             mock.patch.object(sync_mod.starkbank, "transaction") as txn:
-            txn.query.return_value = iter([])
+        with _mocked_query([]) as txn:
             inserted, skipped = sync_mod.sync_transactions(db, limit=50)
         assert inserted == 0
         assert skipped == 0
+        assert txn.query.call_args.kwargs["limit"] == 50
+        count = db.execute("SELECT COUNT(*) AS n FROM assets").fetchone()["n"]
+        assert count == 0
+        assert txn.query.call_count == 1
 
     def test_query_receives_limit_and_optional_bounds(self, make_db):
         db = make_db()
-        with mock.patch.object(sync_mod, "_get_project", return_value=None), \
-             mock.patch.object(sync_mod.starkbank, "transaction") as txn:
-            txn.query.return_value = iter([])
-            sync_mod.sync_transactions(db, limit=25, after="2024-01-01",
-                                       before="2024-12-31")
-            call_kwargs = txn.query.call_args.kwargs
-        assert call_kwargs["limit"] == 25
-        assert call_kwargs["after"] == "2024-01-01"
-        assert call_kwargs["before"] == "2024-12-31"
+        with _mocked_query([]) as txn:
+            sync_mod.sync_transactions(db, limit=25, after="2024-01-01", before="2024-12-31")
+            kwargs = txn.query.call_args.kwargs
+        assert kwargs["limit"] == 25
+        assert kwargs["after"] == "2024-01-01"
+        assert kwargs["before"] == "2024-12-31"
+        assert txn.query.call_count == 1
+        assert "after" in kwargs and "before" in kwargs
