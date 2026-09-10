@@ -10,42 +10,9 @@ Each truth-table row has its own test so a mutation to any
 comparison operator is caught immediately.
 """
 
-import os
-import sqlite3
-import tempfile
-
-import pytest
-
-_db_fd, _db_path = tempfile.mkstemp(suffix=".db")
-os.environ["DB_PATH"]     = _db_path
-os.environ["LEDGER_USER"] = "testuser"
-os.environ["LEDGER_PASS"] = "testpass"
-
 import app as app_module  # noqa: E402
 from app import validate_fields  # noqa: E402
-
-
-@pytest.fixture(scope="session", autouse=True)
-def init_database():
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "schema.sql")
-    with open(schema_path) as f:
-        schema = f.read()
-    conn = sqlite3.connect(_db_path)
-    conn.executescript(schema)
-    conn.close()
-    yield
-    os.close(_db_fd)
-    os.unlink(_db_path)
-
-
-@pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
-auth = ("testuser", "testpass")
+from conftest import direct_db  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -166,23 +133,30 @@ class TestNameSanitization:
 
 class TestValidationViaAPI:
 
-    def test_post_zero_value_returns_400(self, client):
+    def test_post_zero_value_returns_400(self, client, auth):
         resp = client.post("/api/assets", auth=auth, json={
             "asset_name": "PMAX", "category": "Securities & Commodities",
             "estimated_value": 0,
         })
         assert resp.status_code == 400
         assert "greater than zero" in resp.get_json()["error"]
+        # Pattern 4: rejected writes must leave no row (silent-success guard).
+        assert direct_db().execute(
+            "SELECT id FROM assets WHERE asset_name = 'PMAX'"
+        ).fetchone() is None
 
-    def test_post_negative_quantity_returns_400(self, client):
+    def test_post_negative_quantity_returns_400(self, client, auth):
         resp = client.post("/api/assets", auth=auth, json={
             "asset_name": "PMAX", "category": "Securities & Commodities",
             "quantity": -1,
         })
         assert resp.status_code == 400
         assert "greater than zero" in resp.get_json()["error"]
+        assert direct_db().execute(
+            "SELECT id FROM assets WHERE asset_name = 'PMAX'"
+        ).fetchone() is None
 
-    def test_post_name_sanitized_in_db(self, client):
+    def test_post_name_sanitized_in_db(self, client, auth):
         resp = client.post("/api/assets", auth=auth, json={
             "asset_name": "  PMAX - Powell Max Limited  ",
             "category": "Securities & Commodities",
@@ -190,8 +164,13 @@ class TestValidationViaAPI:
         })
         assert resp.status_code == 201
         assert resp.get_json()["asset_name"] == "PMAX - Powell Max Limited"
+        # Pattern 4: confirm sanitization persisted to the DB, not just the response.
+        row = direct_db().execute(
+            "SELECT asset_name FROM assets WHERE asset_name = 'PMAX - Powell Max Limited'"
+        ).fetchone()
+        assert row["asset_name"] == "PMAX - Powell Max Limited"
 
-    def test_put_negative_value_returns_400(self, client):
+    def test_put_negative_value_returns_400(self, client, auth):
         create = client.post("/api/assets", auth=auth, json={
             "asset_name": "Temp", "category": "Cryptocurrency",
         })
@@ -202,8 +181,13 @@ class TestValidationViaAPI:
         })
         assert resp.status_code == 400
         assert "greater than zero" in resp.get_json()["error"]
+        # Pattern 4: existing row must be untouched by the rejected update.
+        row = direct_db().execute(
+            "SELECT estimated_value FROM assets WHERE id = ?", (asset_id,)
+        ).fetchone()
+        assert row["estimated_value"] is None
 
-    def test_kills_float_drift_mutant(self, client):
+    def test_kills_float_drift_mutant(self, client, auth):
         """
         AI8TB Density: kills the 'Float Drift' mutant.
 
@@ -226,7 +210,7 @@ class TestValidationViaAPI:
 
         # Read the raw stored string directly from SQLite — bypasses any
         # float conversion the JSON serialiser might apply
-        conn = _sqlite3.connect(_db_path)
+        conn = _sqlite3.connect(app_module.DB_PATH)
         row = conn.execute(
             "SELECT estimated_value, quantity FROM assets WHERE id = ?",
             (asset_id,),
@@ -236,7 +220,7 @@ class TestValidationViaAPI:
         assert row[0] == "0.2900", f"Float drift detected: stored '{row[0]}' not '0.2900'"
         assert row[1] == "100.0000", f"Quantity drift: stored '{row[1]}' not '100.0000'"
 
-    def test_valid_pmax_trade_accepted(self, client):
+    def test_valid_pmax_trade_accepted(self, client, auth):
         """End-to-end: the PMAX trade from the order confirmation."""
         resp = client.post("/api/assets", auth=auth, json={
             "asset_name": "PMAX - Powell Max Limited",

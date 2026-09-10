@@ -47,38 +47,9 @@ MUTANT 7  entire condition   →  `True` (always deny)
            Killed by: test_correct_credentials_allowed
 """
 
-import os
-import sqlite3
-import tempfile
-
 import pytest
 
-_db_fd, _db_path = tempfile.mkstemp(suffix=".db")
-os.environ["DB_PATH"]      = _db_path
-os.environ["LEDGER_USER"]  = "legituser"
-os.environ["LEDGER_PASS"]  = "legitpass"
-
-import app as app_module  # noqa: E402
-
-
-@pytest.fixture(scope="session", autouse=True)
-def init_database():
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "schema.sql")
-    with open(schema_path) as f:
-        schema = f.read()
-    conn = sqlite3.connect(_db_path)
-    conn.executescript(schema)
-    conn.close()
-    yield
-    os.close(_db_fd)
-    os.unlink(_db_path)
-
-
-@pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
+import app as app_module  # noqa: E402  (env/credentials fixed by conftest.py)
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +77,7 @@ class TestAccessControlMutations:
                MUTANT 4 (second or → and) — only blocks when BOTH wrong; this has
                correct password so the and-mutant would let it through.
         """
-        resp = client.get("/api/assets", auth=("wronguser", "legitpass"))
+        resp = client.get("/api/assets", auth=("wronguser", "testpass"))
         assert resp.status_code == 401
 
     # KILLS MUTANT 3, 5
@@ -116,7 +87,7 @@ class TestAccessControlMutations:
         Kills: MUTANT 3 (username != → ==) — correct name would now block instead of pass.
                MUTANT 5 (password != → ==) — wrong password would pass instead of block.
         """
-        resp = client.get("/api/assets", auth=("legituser", "wrongpass"))
+        resp = client.get("/api/assets", auth=("testuser", "wrongpass"))
         assert resp.status_code == 401
 
     # KILLS MUTANT 5, 7
@@ -126,7 +97,7 @@ class TestAccessControlMutations:
         Kills: MUTANT 5 (password != → ==) — correct password would now be denied.
                MUTANT 7 (condition → True) — gate always denies; nothing passes.
         """
-        resp = client.get("/api/assets", auth=("legituser", "legitpass"))
+        resp = client.get("/api/assets", auth=("testuser", "testpass"))
         assert resp.status_code == 200
 
     # KILLS MUTANT 2 explicitly (no-header + correct creds variant)
@@ -141,17 +112,17 @@ class TestAccessControlMutations:
 
     def test_case_sensitive_username(self, client):
         """
-        'LegitUser' (wrong case) must not match 'legituser'.
+        'TestUser' (wrong case) must not match 'testuser'.
         Guards against a mutation that normalises credentials before comparison.
         """
-        resp = client.get("/api/assets", auth=("LegitUser", "legitpass"))
+        resp = client.get("/api/assets", auth=("TestUser", "testpass"))
         assert resp.status_code == 401
 
     def test_case_sensitive_password(self, client):
         """
-        'LegitPass' (wrong case) must not match 'legitpass'.
+        'TestPass' (wrong case) must not match 'testpass'.
         """
-        resp = client.get("/api/assets", auth=("legituser", "LegitPass"))
+        resp = client.get("/api/assets", auth=("testuser", "TestPass"))
         assert resp.status_code == 401
 
     def test_swapped_credentials_denied(self, client):
@@ -160,7 +131,7 @@ class TestAccessControlMutations:
         Kills a structural mutant where the username and password
         comparison targets are accidentally transposed.
         """
-        resp = client.get("/api/assets", auth=("legitpass", "legituser"))
+        resp = client.get("/api/assets", auth=("testpass", "testuser"))
         assert resp.status_code == 401
 
     def test_failed_auth_produces_no_db_side_effects(self, client):

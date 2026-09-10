@@ -13,50 +13,16 @@ use those credentials.
 import json
 import os
 import sqlite3
-import tempfile
 from datetime import date, timedelta
 
 import pytest
 
-# These env settings only take effect if this module is imported first.
-# When run as part of the full suite, test_app.py has already imported app.py
-# with testuser/testpass. We set the same values here for isolation runs.
-_db_fd, _db_path = tempfile.mkstemp(suffix=".db")
-os.environ["DB_PATH"] = _db_path
-os.environ["LEDGER_USER"] = "testuser"
-os.environ["LEDGER_PASS"] = "testpass"
-os.environ["FLASK_SECRET_KEY"] = "test-secret"
-
-import app as app_module  # noqa: E402
-
-
-@pytest.fixture(scope="session", autouse=True)
-def init_database():
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "schema.sql")
-    with open(schema_path) as f:
-        schema = f.read()
-    conn = sqlite3.connect(app_module.DB_PATH)
-    conn.executescript(schema)
-    conn.close()
-    yield
-    os.close(_db_fd)
-    try:
-        os.unlink(_db_path)
-    except FileNotFoundError:
-        pass
-
-
-@pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
+import app as app_module  # noqa: E402  (env/credentials fixed by conftest.py)
 
 
 @pytest.fixture()
 def auth():
-    # Match the credentials that app_module.LEDGER_USER/PASS were set to
-    # at first import (always testuser/testpass when running the full suite).
+    # Credentials fixed at first import by conftest.py (testuser/testpass).
     return (app_module.LEDGER_USER, app_module.LEDGER_PASS)
 
 

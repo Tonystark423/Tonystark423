@@ -33,43 +33,12 @@ Pattern: seed N categories, filter for 1, assert the other N-1 are absent.
 """
 
 import json
-import os
 import sqlite3
-import tempfile
+from urllib.parse import quote
 
 import pytest
 
-_db_fd, _db_path = tempfile.mkstemp(suffix=".db")
-os.environ["DB_PATH"] = _db_path
-os.environ["LEDGER_USER"] = "testuser"
-os.environ["LEDGER_PASS"] = "testpass"
-
 import app as app_module  # noqa: E402
-
-
-@pytest.fixture(scope="session", autouse=True)
-def init_database():
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "schema.sql")
-    with open(schema_path) as f:
-        schema = f.read()
-    conn = sqlite3.connect(_db_path)
-    conn.executescript(schema)
-    conn.close()
-    yield
-    os.close(_db_fd)
-    os.unlink(_db_path)
-
-
-@pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
-@pytest.fixture()
-def auth():
-    return ("testuser", "testpass")
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +79,7 @@ def matrix_data(client, auth):
         ids.append(resp.get_json()["id"])
     yield records
     # Teardown: remove seeded rows so they don't bleed into other tests
-    conn = sqlite3.connect(_db_path)
+    conn = sqlite3.connect(app_module.DB_PATH)
     for asset_id in ids:
         conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     conn.commit()
@@ -233,7 +202,7 @@ class TestInnerGatePattern:
         )
         asset_id = resp.get_json()["id"]
         yield asset_id
-        conn = sqlite3.connect(_db_path)
+        conn = sqlite3.connect(app_module.DB_PATH)
         conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
         conn.commit()
         conn.close()
@@ -292,7 +261,7 @@ class TestInnerGatePattern:
         )
         assert resp.status_code == 400
         # Verify the DB row's timestamps were NOT touched
-        conn = sqlite3.connect(_db_path)
+        conn = sqlite3.connect(app_module.DB_PATH)
         row = conn.execute(
             "SELECT updated_at FROM assets WHERE id = ?", (existing_id,)
         ).fetchone()
@@ -419,7 +388,7 @@ class TestFilterIsolation:
             assert resp.status_code == 201
             ids.append(resp.get_json()["id"])
         yield categories
-        conn = sqlite3.connect(_db_path)
+        conn = sqlite3.connect(app_module.DB_PATH)
         for asset_id in ids:
             conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
         conn.commit()
@@ -442,7 +411,11 @@ class TestFilterIsolation:
         """
         other_categories = [c for c in isolation_data if c != target_category]
 
-        resp = client.get(f"/api/assets?category={target_category}", auth=auth)
+        # URL-encode the category: 'Securities & Commodities' contains '&',
+        # which would otherwise split into two query params and silently filter
+        # on 'Securities ' (matching nothing). This mirrors what a real client
+        # (and the app's other tests using 'Proprietary+IP') must do.
+        resp = client.get(f"/api/assets?category={quote(target_category)}", auth=auth)
         assert resp.status_code == 200
         results = resp.get_json()
 
