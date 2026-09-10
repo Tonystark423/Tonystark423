@@ -17,7 +17,9 @@ an in-memory database instead; see ``make_db`` / ``memory_db``.
 
 import os
 import sqlite3
+import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -26,6 +28,14 @@ import pytest
 # pytest imports conftest.py before collecting any test module, so this runs
 # first and freezes app_module.DB_PATH / LEDGER_USER / LEDGER_PASS once.
 # ---------------------------------------------------------------------------
+# Ensure the repository root (where app.py, tax_engine.py, ledger_processor.py
+# and starkbank_sync.py live) is importable. pytest's rootdir auto-discovery
+# does not always prepend it to sys.path (depends on invocation / config),
+# so add it explicitly to keep `import app` robust in CI.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.environ["DB_PATH"] = _db_path
 os.environ["LEDGER_USER"] = "testuser"
