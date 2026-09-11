@@ -77,6 +77,11 @@ python scripts/check_assertion_density.py tests/
 
 See [TESTING_STANDARDS.md](TESTING_STANDARDS.md) for the full playbook: patterns, examples, and the CI gate configuration.
 
+## Roadmap
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the milestone plan (security hardening,
+schema lifecycle, reporting, integrations, operations, and quality gates).
+
 ## Security Notes
 
 - Never commit `ledger.db` or `.env` to git (both are in `.gitignore`)
