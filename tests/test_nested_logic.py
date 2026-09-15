@@ -445,7 +445,11 @@ class TestFilterIsolation:
         """
         other_categories = [c for c in isolation_data if c != target_category]
 
-        resp = client.get(f"/api/assets?category={target_category}", auth=auth)
+        resp = client.get(
+            "/api/assets",
+            query_string={"category": target_category},
+            auth=auth,
+        )
         assert resp.status_code == 200
         results = resp.get_json()
 
