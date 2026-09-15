@@ -77,6 +77,9 @@ def init_database():
 @pytest.fixture()
 def client():
     app_module.app.config["TESTING"] = True
+    app_module.app.config["DB_PATH"] = _db_path
+    app_module.app.config["LEDGER_USER"] = "legituser"
+    app_module.app.config["LEDGER_PASS"] = "legitpass"
     with app_module.app.test_client() as c:
         yield c
 

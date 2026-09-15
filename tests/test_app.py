@@ -46,6 +46,9 @@ def init_database():
 @pytest.fixture()
 def client():
     app_module.app.config["TESTING"] = True
+    app_module.app.config["DB_PATH"] = _db_path
+    app_module.app.config["LEDGER_USER"] = "testuser"
+    app_module.app.config["LEDGER_PASS"] = "testpass"
     with app_module.app.test_client() as c:
         yield c
 
@@ -185,6 +188,8 @@ class TestCreateAsset:
         assert resp.status_code == 201
         data = resp.get_json()
         for key, val in payload.items():
+            if key in {"quantity", "estimated_value"}:
+                val = f"{val:.4f}"
             assert data[key] == val, f"Field {key!r} mismatch"
 
     def test_invalid_category_rejected_by_db(self, client, auth):
@@ -214,8 +219,7 @@ class TestCreateAsset:
         assert data["estimated_value"] is None
         assert data["quantity"] is None
 
-    def test_negative_estimated_value_accepted(self, client, auth):
-        """Negative values are not blocked at the API layer (could represent liability)."""
+    def test_negative_estimated_value_rejected(self, client, auth):
         resp = client.post(
             "/api/assets",
             data=json.dumps({
@@ -226,10 +230,10 @@ class TestCreateAsset:
             content_type="application/json",
             auth=auth,
         )
-        assert resp.status_code == 201
-        assert resp.get_json()["estimated_value"] == -5000.0
+        assert resp.status_code == 400
+        assert "greater than zero" in resp.get_json()["error"]
 
-    def test_zero_quantity_accepted(self, client, auth):
+    def test_zero_quantity_rejected(self, client, auth):
         resp = client.post(
             "/api/assets",
             data=json.dumps({
@@ -241,8 +245,8 @@ class TestCreateAsset:
             content_type="application/json",
             auth=auth,
         )
-        assert resp.status_code == 201
-        assert resp.get_json()["quantity"] == 0.0
+        assert resp.status_code == 400
+        assert "greater than zero" in resp.get_json()["error"]
 
 
 # ---------------------------------------------------------------------------

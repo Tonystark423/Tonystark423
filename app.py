@@ -19,10 +19,6 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "changeme")
 
-DB_PATH = os.getenv("DB_PATH", "ledger.db")
-LEDGER_USER = os.getenv("LEDGER_USER", "admin")
-LEDGER_PASS = os.getenv("LEDGER_PASS", "changeme")
-
 COLUMNS = [
     "id", "asset_name", "category", "subcategory", "description",
     "quantity", "unit", "estimated_value", "acquisition_date",
@@ -39,6 +35,10 @@ ASSET_NAME_MAX_LENGTH = 100
 # character set — the upstream API validates the actual address; we only
 # guard against path-traversal and injection characters.
 _ADDRESS_RE = re.compile(r"^[A-Za-z0-9]{25,90}$")
+
+
+def _setting(name: str, default: str) -> str:
+    return app.config.get(name) or os.getenv(name, default)
 
 
 def validate_fields(fields: dict) -> tuple[dict, str | None]:
@@ -88,7 +88,7 @@ def validate_fields(fields: dict) -> tuple[dict, str | None]:
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
+        g.db = sqlite3.connect(_setting("DB_PATH", "ledger.db"))
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA journal_mode=WAL")
     return g.db
@@ -109,7 +109,11 @@ def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         auth = request.authorization
-        if not auth or auth.username != LEDGER_USER or auth.password != LEDGER_PASS:
+        if (
+            not auth
+            or auth.username != _setting("LEDGER_USER", "admin")
+            or auth.password != _setting("LEDGER_PASS", "changeme")
+        ):
             return Response(
                 "Authentication required.",
                 401,

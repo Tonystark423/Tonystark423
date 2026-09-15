@@ -53,6 +53,9 @@ def init_database():
 @pytest.fixture()
 def client():
     app_module.app.config["TESTING"] = True
+    app_module.app.config["DB_PATH"] = _db_path
+    app_module.app.config["LEDGER_USER"] = "testuser"
+    app_module.app.config["LEDGER_PASS"] = "testpass"
     with app_module.app.test_client() as c:
         yield c
 
@@ -96,17 +99,16 @@ class TestDBCallSpy:
         spy_conn = MagicMock(wraps=real_conn)
 
         with patch.object(app_module, "get_db", return_value=spy_conn):
-            with app_module.app.test_request_context():
-                client.post(
-                    "/api/assets",
-                    data=json.dumps({
-                        "asset_name": "Spy Test Asset",
-                        "category": "Cryptocurrency",
-                        "estimated_value": 9999.0,
-                    }),
-                    content_type="application/json",
-                    auth=auth,
-                )
+            client.post(
+                "/api/assets",
+                data=json.dumps({
+                    "asset_name": "Spy Test Asset",
+                    "category": "Cryptocurrency",
+                    "estimated_value": 9999.0,
+                }),
+                content_type="application/json",
+                auth=auth,
+            )
 
         # Collect every SQL string passed to execute()
         executed_sql = [
@@ -213,6 +215,8 @@ class TestDBStateVerification:
 
         # Every payload field must match DB state exactly
         for field, expected in payload.items():
+            if field in {"quantity", "estimated_value"}:
+                expected = f"{expected:.4f}"
             assert row[field] == expected, (
                 f"DB field {field!r} = {row[field]!r}, expected {expected!r}"
             )
