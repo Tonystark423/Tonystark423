@@ -19,6 +19,10 @@ DB_PATH = os.getenv("DB_PATH", "ledger.db")
 LEDGER_USER = os.getenv("LEDGER_USER", "admin")
 LEDGER_PASS = os.getenv("LEDGER_PASS", "changeme")
 
+app.config.setdefault("DB_PATH", DB_PATH)
+app.config.setdefault("LEDGER_USER", LEDGER_USER)
+app.config.setdefault("LEDGER_PASS", LEDGER_PASS)
+
 COLUMNS = [
     "id", "asset_name", "category", "subcategory", "description",
     "quantity", "unit", "estimated_value", "acquisition_date",
@@ -37,6 +41,13 @@ SIGNING_COLUMNS = [
     "created_at", "updated_at",
 ]
 SIGNING_WRITABLE = [c for c in SIGNING_COLUMNS if c not in ("id", "created_at", "updated_at")]
+
+
+def _get_runtime_setting(name: str, default: str) -> str:
+    value = app.config.get(name)
+    if value is not None:
+        return value
+    return os.getenv(name, default)
 
 
 def validate_fields(fields: dict) -> tuple[dict, str | None]:
@@ -86,7 +97,7 @@ def validate_fields(fields: dict) -> tuple[dict, str | None]:
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
+        g.db = sqlite3.connect(_get_runtime_setting("DB_PATH", DB_PATH))
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA journal_mode=WAL")
     return g.db
@@ -107,7 +118,9 @@ def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         auth = request.authorization
-        if not auth or auth.username != LEDGER_USER or auth.password != LEDGER_PASS:
+        ledger_user = _get_runtime_setting("LEDGER_USER", LEDGER_USER)
+        ledger_pass = _get_runtime_setting("LEDGER_PASS", LEDGER_PASS)
+        if not auth or auth.username != ledger_user or auth.password != ledger_pass:
             return Response(
                 "Authentication required.",
                 401,
